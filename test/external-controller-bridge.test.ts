@@ -17,7 +17,7 @@ const {
   resetExternalControllerForTests,
   sendExternalWorkerMessage
 } = await import('../src/main/external-controller.js');
-const { pendingCommands, queueWorkerBootstrap, queueWorkerRevival, resetBridgeForTests } = await import('../src/main/bridge.js');
+const { queueWorkerBootstrap, queueWorkerRevival, resetBridgeForTests } = await import('../src/main/bridge.js');
 
 beforeEach(() => {
   resetExternalControllerForTests();
@@ -25,7 +25,7 @@ beforeEach(() => {
 });
 
 describe('external worker bridge reuse', () => {
-  it('queues a normal worker bootstrap for an external-owned run', () => {
+  it('creates the normal worker bootstrap command for an external-owned run', () => {
     const worker = ensureExternalWorker({
       controllerId: 'codex', workerKey: 'frontend', operationId: 'ensure-1', task: 'Implement A'
     });
@@ -40,10 +40,10 @@ describe('external worker bridge reuse', () => {
 
     expect(command).not.toBeNull();
     expect(command?.type).toBe('worker');
-    expect(pendingCommands()).toHaveLength(1);
+    expect(command?.agent).toBe(worker.providerWorkerId);
   });
 
-  it('queues a safe existing-conversation revival for an external message', () => {
+  it('creates a safe existing-conversation revival command for an external message', () => {
     const worker = ensureExternalWorker({
       controllerId: 'codex', workerKey: 'frontend', operationId: 'ensure-1', task: 'Implement A'
     });
