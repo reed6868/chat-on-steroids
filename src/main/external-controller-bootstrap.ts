@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
@@ -12,11 +13,35 @@ import { startExternalControllerServer, type ExternalControllerServer } from './
 import { logError, logInfo, logWarn } from './logger.js';
 
 const STATE_FILE = 'external-controller-state.json';
+const userDataDir = app.getPath('userData');
 let server: ExternalControllerServer | null = null;
 let writeTimer: NodeJS.Timeout | null = null;
 let writeFlight: Promise<void> = Promise.resolve();
 
-async function writeState(userDataDir: string, snapshot: ExternalControllerSnapshot): Promise<void> {
+/**
+ * Restore ownership synchronously at module load. The bridge restores its independently durable
+ * browser commands during app startup; those commands must see their external run owner before
+ * deciding whether an old row is stale. This reads one small local JSON file and performs no I/O
+ * beyond that bounded startup read.
+ */
+function restoreStateBeforeBridge(): void {
+  const target = path.join(userDataDir, STATE_FILE);
+  try {
+    const saved = JSON.parse(readFileSync(target, 'utf8')) as ExternalControllerSnapshot;
+    restoreExternalController(saved);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      restoreExternalController(null);
+      return;
+    }
+    restoreExternalController(null);
+    logWarn(`external controller state was not restored: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+restoreStateBeforeBridge();
+
+async function writeState(snapshot: ExternalControllerSnapshot): Promise<void> {
   const target = path.join(userDataDir, STATE_FILE);
   const temp = `${target}.tmp`;
   const payload = JSON.stringify(snapshot) + '\n';
@@ -29,28 +54,11 @@ async function writeState(userDataDir: string, snapshot: ExternalControllerSnaps
   return writeFlight;
 }
 
-async function restoreState(userDataDir: string): Promise<void> {
-  const target = path.join(userDataDir, STATE_FILE);
-  try {
-    const saved = JSON.parse(await fs.readFile(target, 'utf8')) as ExternalControllerSnapshot;
-    restoreExternalController(saved);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      restoreExternalController(null);
-      return;
-    }
-    // A corrupt controller state must never be guessed back into authority. Start empty and
-    // leave the bad file untouched until the next real mutation replaces it atomically.
-    restoreExternalController(null);
-    logWarn(`external controller state was not restored: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
-
-function scheduleStateWrite(userDataDir: string): void {
+function scheduleStateWrite(): void {
   if (writeTimer) return;
   writeTimer = setTimeout(() => {
     writeTimer = null;
-    void writeState(userDataDir, snapshotExternalController()).catch((error) => {
+    void writeState(snapshotExternalController()).catch((error) => {
       logError(`external controller state write failed: ${error instanceof Error ? error.message : String(error)}`);
     });
   }, 50);
@@ -58,10 +66,8 @@ function scheduleStateWrite(userDataDir: string): void {
 }
 
 async function start(): Promise<void> {
-  const userDataDir = app.getPath('userData');
-  await restoreState(userDataDir);
-  onExternalControllerPersist(() => scheduleStateWrite(userDataDir));
-  onExternalControllerPersistNow((snapshot) => writeState(userDataDir, snapshot));
+  onExternalControllerPersist(scheduleStateWrite);
+  onExternalControllerPersistNow(writeState);
   server = await startExternalControllerServer(userDataDir);
   logInfo('external controller ready');
 }
@@ -75,8 +81,7 @@ app.on('before-quit', () => {
     clearTimeout(writeTimer);
     writeTimer = null;
   }
-  const userDataDir = app.getPath('userData');
-  void writeState(userDataDir, snapshotExternalController()).catch(() => undefined);
+  void writeState(snapshotExternalController()).catch(() => undefined);
   const active = server;
   server = null;
   void active?.close().catch(() => undefined);
