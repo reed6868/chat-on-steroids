@@ -1,4 +1,4 @@
-// Keep the application bootstrap intact and layer the independent loopback controller beside it.
-// Both modules share the same broker/bridge singletons; the external surface owns no window.
-import './index-app.js';
+// Restore external ownership before the unchanged application bootstrap can recover bridge
+// commands. The controller server itself still waits for Electron ready.
 import './external-controller-bootstrap.js';
+import './index-app.js';
