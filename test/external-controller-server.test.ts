@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { makeTempDir, removeTempDir } from './helpers.js';
 
-const { resetExternalControllerForTests } = await import('../src/main/external-controller.js');
+const { onExternalControllerPersistNow, resetExternalControllerForTests } = await import('../src/main/external-controller.js');
 const { startExternalControllerServer } = await import('../src/main/external-controller-server.js');
 
 let dir = '';
@@ -12,6 +12,7 @@ let close: (() => Promise<void>) | null = null;
 
 beforeEach(async () => {
   resetExternalControllerForTests();
+  onExternalControllerPersistNow(async () => undefined);
   dir = await makeTempDir('clf-external-controller-');
 });
 
