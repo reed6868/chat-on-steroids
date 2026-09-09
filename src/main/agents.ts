@@ -17,7 +17,6 @@ import {
   externalRunActive,
   externalWorkerByRun,
   failExternalWorkerBootstrap,
-  inspectExternalDelivery,
   markExternalRevivalAmbiguous,
   noteExternalWorkerRevived,
   onExternalReviveRequest,
@@ -46,7 +45,7 @@ function externalInfo(worker: ExternalWorkerStatus): AgentInfo {
   const state = externalState(worker);
   return {
     runId: worker.runId,
-    // Deliberately absent: external ownership never manufactures a Prime conversation.
+    // Deliberately no primeConversationId: external ownership never manufactures one.
     id: worker.providerWorkerId,
     role: 'worker',
     label: worker.workerKey,
@@ -85,16 +84,12 @@ export function swarmRunning(runId?: string): boolean {
   return prime.swarmRunning(runId);
 }
 
-export function activeRunIds(): string[] {
-  const external = snapshotExternalController().workers.filter((worker) => externalRunActive(worker.runId)).map((worker) => worker.runId);
-  return [...new Set([...prime.activeRunIds(), ...external])];
-}
-
 export function onSpawnRequest(handler: (workers: prime.WorkerSpawn[]) => void): () => void {
   const dropPrime = prime.onSpawnRequest(handler);
   const dropExternal = onExternalSpawnRequest((worker) => {
     handler([{
       runId: worker.runId,
+      // Compatibility projection only. No Prime conversation is stored as authority.
       primeConversationId: undefined as unknown as string,
       id: worker.id,
       task: externalBootstrapTask(worker.task),
@@ -109,7 +104,7 @@ export function onSpawnRequest(handler: (workers: prime.WorkerSpawn[]) => void):
 }
 
 export function pendingWorkerSpawns(): prime.WorkerSpawn[] {
-  const external = pendingExternalWorkerSpawns().map((worker) => ({
+  const external: prime.WorkerSpawn[] = pendingExternalWorkerSpawns().map((worker) => ({
     runId: worker.runId,
     primeConversationId: undefined as unknown as string,
     id: worker.id,
@@ -139,7 +134,7 @@ export function onReviveRequest(handler: (revivals: prime.WorkerRevival[]) => vo
 }
 
 export function pendingWorkerRevivals(): prime.WorkerRevival[] {
-  const external = pendingExternalWorkerRevivals().map((revival) => ({
+  const external: prime.WorkerRevival[] = pendingExternalWorkerRevivals().map((revival) => ({
     primeConversationId: undefined as unknown as string,
     id: revival.id,
     conversationId: revival.conversationId,
@@ -167,23 +162,28 @@ export function agentConversation(id: string, runId?: string): string | null {
 }
 
 export function agentForConversation(conversationId: string | null | undefined): string | null {
+  if (!conversationId) return null;
   return externalByConversation(conversationId)?.providerWorkerId ?? prime.agentForConversation(conversationId);
 }
 
 export function isWorkerConversation(conversationId: string | null | undefined): boolean {
+  if (!conversationId) return false;
   return externalByConversation(conversationId) !== null || prime.isWorkerConversation(conversationId);
 }
 
 export function agentInfoForOwnedConversation(conversationId: string | null | undefined): AgentInfo | null {
+  if (!conversationId) return null;
   const external = externalByConversation(conversationId);
   return external ? externalInfo(external) : prime.agentInfoForOwnedConversation(conversationId);
 }
 
 export function agentForOwnedConversation(conversationId: string | null | undefined): string | null {
+  if (!conversationId) return null;
   return externalByConversation(conversationId)?.providerWorkerId ?? prime.agentForOwnedConversation(conversationId);
 }
 
 export function primeForOwnedConversation(conversationId: string | null | undefined): string | null {
+  if (!conversationId) return null;
   // External workers deliberately have no Prime conversation.
   if (externalByConversation(conversationId)) return null;
   return prime.primeForOwnedConversation(conversationId);
@@ -194,12 +194,19 @@ export function primeConversation(runId?: string): string | null {
   return prime.primeConversation(runId);
 }
 
-export function failAgent(id: string, reason: string, result?: string, options?: unknown, runId?: string): boolean {
+export function failAgent(
+  id: string,
+  reason: string,
+  note?: string,
+  options: { revivable?: boolean } = {},
+  runId?: string
+): ReturnType<typeof prime.failAgent> {
   if (runId && externalRunActive(runId)) {
     const worker = externalWorkerByRun(runId);
-    return !!worker && worker.providerWorkerId === id && failExternalWorkerBootstrap(runId, reason);
+    if (worker?.providerWorkerId === id) failExternalWorkerBootstrap(runId, reason);
+    return null;
   }
-  return prime.failAgent(id, reason, result, options as never, runId);
+  return prime.failAgent(id, reason, note, options, runId);
 }
 
 export function claimWorkerRevival(id: string, conversationId: string, runId?: string): boolean {
@@ -252,10 +259,15 @@ export function workerRevivalDeliveredSince(
   return prime.workerRevivalDeliveredSince(id, conversationId, commandId, claimedAt, runId);
 }
 
-export function failWorkerRevival(id: string, reason: string, runId?: string): boolean {
+export function failWorkerRevival(
+  id: string,
+  reason: string,
+  runId?: string
+): ReturnType<typeof prime.failWorkerRevival> {
   if (runId && externalRunActive(runId)) {
     const revival = externalRevivalFor(id, runId);
-    return !!revival && markExternalRevivalAmbiguous(runId, revival.operationId, reason);
+    if (revival) markExternalRevivalAmbiguous(runId, revival.operationId, reason);
+    return null;
   }
   return prime.failWorkerRevival(id, reason, runId);
 }
@@ -277,8 +289,7 @@ export async function persistCriticalSwarmNow(): Promise<boolean> {
     prime.persistCriticalSwarmNow(),
     persistCriticalExternalControllerNow()
   ]);
-  // Startup wires both sinks. During focused tests one side may intentionally be absent;
-  // the operation is durable when the broker that actually owns it crossed its barrier.
+  // Startup wires both sinks. Focused tests may intentionally wire just one side.
   return primeDurable || externalDurable;
 }
 
@@ -294,8 +305,4 @@ export function noteAgentAlive(
     return null;
   }
   return prime.noteAgentAlive(conversationId, source, at);
-}
-
-export function transportIdentityStatus(): ReturnType<typeof prime.transportIdentityStatus> {
-  return prime.transportIdentityStatus();
 }
