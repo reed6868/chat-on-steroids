@@ -2,10 +2,13 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import { isReasoningEffort, type ReasoningEffort } from '../shared/session.js';
 import {
   ensureExternalWorker,
   inspectExternalDelivery,
   inspectExternalWorker,
+  persistCriticalExternalControllerNow,
+  publishExternalController,
   sendExternalWorkerMessage
 } from './external-controller.js';
 import { logInfo, logWarn } from './logger.js';
@@ -19,6 +22,8 @@ export interface ExternalControllerServer {
   capabilityPath: string;
   close: () => Promise<void>;
 }
+
+class ControllerUnavailableError extends Error {}
 
 function safeEqual(a: string, b: string): boolean {
   const one = Buffer.from(a, 'utf8');
@@ -78,19 +83,29 @@ function nullableStringField(body: Record<string, unknown>, key: string): string
   return value;
 }
 
+function reasoningEffortField(body: Record<string, unknown>): ReasoningEffort | null | undefined {
+  const value = nullableStringField(body, 'reasoningEffort');
+  if (value === undefined || value === null) return value;
+  if (!isReasoningEffort(value)) throw new Error('reasoningEffort is not a supported reasoning level');
+  return value;
+}
+
 function isAuthorised(req: http.IncomingMessage, token: string): boolean {
   const header = req.headers.authorization;
   return typeof header === 'string' && header.startsWith('Bearer ') && safeEqual(header.slice(7), token);
 }
 
+async function publishDurably(): Promise<void> {
+  if (!await persistCriticalExternalControllerNow()) {
+    throw new ControllerUnavailableError('external controller could not durably accept the operation');
+  }
+  publishExternalController();
+}
+
 async function writeCapabilityFile(userDataDir: string, port: number, token: string): Promise<string> {
   const capabilityPath = path.join(userDataDir, CAPABILITY_FILE);
   const temp = `${capabilityPath}.tmp`;
-  const payload = JSON.stringify({
-    version: 1,
-    url: `http://127.0.0.1:${port}`,
-    token
-  }, null, 2) + '\n';
+  const payload = JSON.stringify({ version: 1, url: `http://127.0.0.1:${port}`, token }, null, 2) + '\n';
   await fs.mkdir(userDataDir, { recursive: true });
   await fs.writeFile(temp, payload, { mode: 0o600 });
   await fs.rename(temp, capabilityPath);
@@ -124,8 +139,9 @@ export async function startExternalControllerServer(userDataDir: string): Promis
             operationId: stringField(body, 'operationId'),
             task: stringField(body, 'task'),
             model: nullableStringField(body, 'model'),
-            reasoningEffort: nullableStringField(body, 'reasoningEffort') as never
+            reasoningEffort: reasoningEffortField(body)
           });
+          await publishDurably();
           reply(res, 200, status);
           return;
         }
@@ -144,6 +160,7 @@ export async function startExternalControllerServer(userDataDir: string): Promis
             operationId: stringField(body, 'operationId'),
             text: stringField(body, 'text')
           });
+          await publishDurably();
           reply(res, 200, delivery);
           return;
         }
@@ -159,7 +176,8 @@ export async function startExternalControllerServer(userDataDir: string): Promis
           reply(res, 404, { error: 'not_found' });
       }
     } catch (error) {
-      reply(res, 400, { error: error instanceof Error ? error.message : String(error) });
+      const unavailable = error instanceof ControllerUnavailableError;
+      reply(res, unavailable ? 503 : 400, { error: error instanceof Error ? error.message : String(error) });
     }
   });
 
