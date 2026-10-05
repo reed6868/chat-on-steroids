@@ -9,7 +9,7 @@ import {
 
 export const CHATGPT_BROWSER_RUNTIME = 'chatgpt-browser';
 
-export type BrowserRuntimeStart = (request: RuntimeStartOptions) => void;
+export type BrowserRuntimeStart = (request: RuntimeStartOptions) => string | null;
 
 export class BrowserAgentRuntime implements AgentRuntime {
   readonly kind = CHATGPT_BROWSER_RUNTIME;
@@ -17,13 +17,13 @@ export class BrowserAgentRuntime implements AgentRuntime {
 
   constructor(private readonly startTransport: BrowserRuntimeStart) {}
 
-  async start(options: RuntimeStartOptions): Promise<RuntimeSession> {
-    this.startTransport(options);
+  async start(options: RuntimeStartOptions): Promise<RuntimeSession | null> {
+    const runtimeSessionId = this.startTransport(options);
+    if (!runtimeSessionId) return null;
     const session: RuntimeSession = {
-      id: `${this.kind}:${options.executionId}:${options.agentId}`,
+      id: runtimeSessionId,
       runtime: this.kind,
-      executionId: options.executionId,
-      agentId: options.agentId
+      executionId: options.executionId
     };
     for (const listener of this.listeners) listener({ type: 'session-started', session });
     return session;
