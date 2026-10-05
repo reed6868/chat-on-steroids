@@ -1,4 +1,4 @@
-import type { AgentRuntime, RuntimeInput, RuntimeSession, RuntimeStartOptions } from './agent-runtime.js';
+import type { RuntimeInput, RuntimeSession, RuntimeStartOptions } from './agent-runtime.js';
 import type { AgentRuntimeRegistry } from './registry.js';
 
 export interface RuntimeExecutionRequest extends RuntimeStartOptions {
