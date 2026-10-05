@@ -2,7 +2,6 @@ import type { ReasoningEffort } from '../../shared/session.js';
 
 export interface RuntimeStartOptions {
   executionId: string;
-  agentId: string;
   input: string;
   model: string | null;
   reasoningEffort: ReasoningEffort | null;
@@ -12,7 +11,6 @@ export interface RuntimeSession {
   id: string;
   runtime: string;
   executionId: string;
-  agentId: string;
 }
 
 export interface RuntimeInput {
@@ -33,7 +31,7 @@ export type RuntimeEventListener = (event: RuntimeEvent) => void;
 
 export interface AgentRuntime {
   readonly kind: string;
-  start(options: RuntimeStartOptions): Promise<RuntimeSession>;
+  start(options: RuntimeStartOptions): Promise<RuntimeSession | null>;
   send(sessionId: string, input: RuntimeInput): Promise<void>;
   cancel(sessionId: string): Promise<void>;
   resume(sessionId: string): Promise<RuntimeSession>;
