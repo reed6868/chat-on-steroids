@@ -5066,6 +5066,7 @@ let bridgeError: string | null = null;
 const bridgeDrains = new Set<Promise<void>>();
 let dropSpawnRequestListener: (() => void) | null = null;
 let dropReviveRequestListener: (() => void) | null = null;
+let dropBrowserRuntimeRegistration: (() => void) | null = null;
 
 function runStaleSwarmSweep(): Promise<boolean> {
   if (staleSweepInFlight) return staleSweepInFlight;
@@ -5277,20 +5278,19 @@ async function startBridgeOnce(epoch: number, prepared?: PreparedBridge): Promis
   retireInactiveWorkerRecovery();
   dropSpawnRequestListener?.();
   const browserRuntimeBindings = new Map<string, { runId: string; agentId: string }>();
-  if (!agentRuntimeRegistry.get(CHATGPT_BROWSER_RUNTIME)) {
-    agentRuntimeRegistry.register(new BrowserAgentRuntime((request) => {
-      const binding = browserRuntimeBindings.get(request.executionId);
-      if (!binding) return null;
-      const command = queueWorkerBootstrap(
-        binding.agentId,
-        request.input,
-        request.model,
-        request.reasoningEffort,
-        binding.runId
-      );
-      return command?.id ?? null;
-    }));
-  }
+  dropBrowserRuntimeRegistration?.();
+  dropBrowserRuntimeRegistration = agentRuntimeRegistry.register(new BrowserAgentRuntime((request) => {
+    const binding = browserRuntimeBindings.get(request.executionId);
+    if (!binding) return null;
+    const command = queueWorkerBootstrap(
+      binding.agentId,
+      request.input,
+      request.model,
+      request.reasoningEffort,
+      binding.runId
+    );
+    return command?.id ?? null;
+  }));
   dropSpawnRequestListener = onSpawnRequest((workers) => {
     for (const worker of workers) {
       const executionId = randomUUID();
@@ -5433,6 +5433,8 @@ export async function stopBridge(): Promise<void> {
     dropSwarmChangeListener = null;
     dropSpawnRequestListener?.();
     dropSpawnRequestListener = null;
+    dropBrowserRuntimeRegistration?.();
+    dropBrowserRuntimeRegistration = null;
     dropReviveRequestListener?.();
     dropReviveRequestListener = null;
     if (staleSwarmTimer) clearInterval(staleSwarmTimer);
