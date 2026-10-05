@@ -56,6 +56,7 @@ describe('agent runtime boundary', () => {
     const bridge = readFileSync(new URL('../src/main/bridge.ts', import.meta.url), 'utf8');
 
     expect(bridge).toContain("from './runtime/browser-runtime.js'");
-    expect(bridge).toContain('browserAgentRuntime.start({');
+    expect(bridge).toContain("from './runtime/registry.js'");
+    expect(bridge).toContain('agentRuntimes.require(CHATGPT_BROWSER_RUNTIME)');
   });
 });
