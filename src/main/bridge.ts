@@ -97,6 +97,8 @@ import {
   startGoalDraft
 } from './goal.js';
 import { logInfo, logWarn } from './logger.js';
+import { BrowserAgentRuntime, CHATGPT_BROWSER_RUNTIME } from './runtime/browser-runtime.js';
+import { AgentRuntimeRegistry } from './runtime/registry.js';
 import {
   closeConversation,
   liveConversations,
@@ -5274,8 +5276,21 @@ async function startBridgeOnce(epoch: number, prepared?: PreparedBridge): Promis
   dropSwarmChangeListener = onSwarmChange(retireInactiveWorkerRecovery);
   retireInactiveWorkerRecovery();
   dropSpawnRequestListener?.();
+  const agentRuntimes = new AgentRuntimeRegistry();
+  agentRuntimes.register(new BrowserAgentRuntime((request) => {
+    queueWorkerBootstrap(request.agentId, request.input, request.model, request.reasoningEffort, request.executionId);
+  }));
   dropSpawnRequestListener = onSpawnRequest((workers) => {
-    for (const worker of workers) queueWorkerBootstrap(worker.id, worker.task, worker.model, worker.reasoningEffort, worker.runId);
+    const browserRuntime = agentRuntimes.require(CHATGPT_BROWSER_RUNTIME);
+    for (const worker of workers) {
+      void browserRuntime.start({
+        executionId: worker.runId,
+        agentId: worker.id,
+        input: worker.task,
+        model: worker.model,
+        reasoningEffort: worker.reasoningEffort
+      });
+    }
   });
   // The same replay contract for waking a worker that already has a chat. A run restored
   // from disk can hold a worker left in `waking` by a crash mid-revival; registering here
