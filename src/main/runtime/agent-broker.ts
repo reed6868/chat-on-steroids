@@ -20,8 +20,18 @@ export interface RuntimeOwnershipSnapshot {
 
 export class RuntimeExecutionBroker {
   private readonly bindings = new Map<string, RuntimeBinding>();
+  private readonly listeners = new Set<() => void>();
 
   constructor(private readonly registry: AgentRuntimeRegistry) {}
+
+  onChange(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private changed(): void {
+    for (const listener of this.listeners) listener();
+  }
 
   binding(ownerId: string): RuntimeBinding | null {
     const binding = this.bindings.get(ownerId);
@@ -56,6 +66,7 @@ export class RuntimeExecutionBroker {
       executionId: request.executionId
     };
     this.bindings.set(request.ownerId, binding);
+    this.changed();
     return { ...binding };
   }
 
@@ -74,6 +85,7 @@ export class RuntimeExecutionBroker {
     if (!binding) return;
     await this.registry.require(binding.runtimeKind).close(binding.sessionId);
     this.bindings.delete(ownerId);
+    this.changed();
   }
 
   snapshot(): RuntimeOwnershipSnapshot {
