@@ -33,6 +33,8 @@ export type RuntimeEventListener = (event: RuntimeEvent) => void;
 
 export interface AgentRuntime {
   readonly kind: string;
+  /** Whether a provider session id remains resumable after this process exits. */
+  readonly sessionPersistence: 'ephemeral' | 'durable';
   start(options: RuntimeStartOptions): Promise<RuntimeSession | null>;
   send(sessionId: string, input: RuntimeInput): Promise<void>;
   cancel(sessionId: string): Promise<void>;
