@@ -97,7 +97,8 @@ import {
   startGoalDraft
 } from './goal.js';
 import { logInfo, logWarn } from './logger.js';
-import { BrowserAgentRuntime } from './runtime/browser-runtime.js';
+import { BrowserAgentRuntime, CHATGPT_BROWSER_RUNTIME } from './runtime/browser-runtime.js';
+import { AgentRuntimeRegistry } from './runtime/registry.js';
 import {
   closeConversation,
   liveConversations,
@@ -5275,12 +5276,14 @@ async function startBridgeOnce(epoch: number, prepared?: PreparedBridge): Promis
   dropSwarmChangeListener = onSwarmChange(retireInactiveWorkerRecovery);
   retireInactiveWorkerRecovery();
   dropSpawnRequestListener?.();
-  const browserAgentRuntime = new BrowserAgentRuntime((request) => {
+  const agentRuntimes = new AgentRuntimeRegistry();
+  agentRuntimes.register(new BrowserAgentRuntime((request) => {
     queueWorkerBootstrap(request.agentId, request.input, request.model, request.reasoningEffort, request.executionId);
-  });
+  }));
   dropSpawnRequestListener = onSpawnRequest((workers) => {
+    const browserRuntime = agentRuntimes.require(CHATGPT_BROWSER_RUNTIME);
     for (const worker of workers) {
-      void browserAgentRuntime.start({
+      void browserRuntime.start({
         executionId: worker.runId,
         agentId: worker.id,
         input: worker.task,
