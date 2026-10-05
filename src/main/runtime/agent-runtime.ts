@@ -5,6 +5,8 @@ export interface RuntimeStartOptions {
   input: string;
   model: string | null;
   reasoningEffort: ReasoningEffort | null;
+  /** Provider working directory when the runtime owns local execution. */
+  cwd?: string | null;
 }
 
 export interface RuntimeSession {
