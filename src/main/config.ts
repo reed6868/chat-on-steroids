@@ -413,7 +413,7 @@ const configSchema = z.object({
     .optional()
     .default({
       enabled: DEFAULT_MULTI_AGENT.enabled,
-      defaultRuntime: DEFAULT_MULTI_AGENT.defaultRuntime,
+      defaultRuntime: 'chatgpt-browser',
       maxWorkers: DEFAULT_MULTI_AGENT.maxWorkers,
       globalMaxWorkers: DEFAULT_MULTI_AGENT.globalMaxWorkers ?? 0,
       allowUnattributedCalls: DEFAULT_MULTI_AGENT.allowUnattributedCalls,
