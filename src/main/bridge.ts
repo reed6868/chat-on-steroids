@@ -48,7 +48,7 @@ import { pendingBrowserInputs, claimBrowserInput, acknowledgeBrowserInput, bindB
  * submit an action, read a local file, run a process or change a permission here.
  */
 
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import http from 'node:http';
 import type { BridgeStatus, CompanionDiagnostics, CompanionPageDiagnostics, CompanionTabDiagnostics, CompanionTraceEntry } from '../shared/types.js';
 import { recoveryBusyMs } from '../shared/recovery.js';
@@ -5277,19 +5277,30 @@ async function startBridgeOnce(epoch: number, prepared?: PreparedBridge): Promis
   retireInactiveWorkerRecovery();
   dropSpawnRequestListener?.();
   const agentRuntimes = new AgentRuntimeRegistry();
+  const browserRuntimeBindings = new Map<string, { runId: string; agentId: string }>();
   agentRuntimes.register(new BrowserAgentRuntime((request) => {
-    queueWorkerBootstrap(request.agentId, request.input, request.model, request.reasoningEffort, request.executionId);
+    const binding = browserRuntimeBindings.get(request.executionId);
+    if (!binding) return null;
+    const command = queueWorkerBootstrap(
+      binding.agentId,
+      request.input,
+      request.model,
+      request.reasoningEffort,
+      binding.runId
+    );
+    return command?.id ?? null;
   }));
   dropSpawnRequestListener = onSpawnRequest((workers) => {
     const browserRuntime = agentRuntimes.require(CHATGPT_BROWSER_RUNTIME);
     for (const worker of workers) {
+      const executionId = randomUUID();
+      browserRuntimeBindings.set(executionId, { runId: worker.runId, agentId: worker.id });
       void browserRuntime.start({
-        executionId: worker.runId,
-        agentId: worker.id,
+        executionId,
         input: worker.task,
         model: worker.model,
         reasoningEffort: worker.reasoningEffort
-      });
+      }).finally(() => browserRuntimeBindings.delete(executionId));
     }
   });
   // The same replay contract for waking a worker that already has a chat. A run restored
