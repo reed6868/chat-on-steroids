@@ -164,6 +164,7 @@ const DEFAULT_GOAL: GoalSettings = {
 // ("too many requests"), which strands the run rather than making it faster.
 const DEFAULT_MULTI_AGENT: MultiAgentSettings = {
   enabled: false,
+  defaultRuntime: 'chatgpt-browser',
   maxWorkers: 2,
   // Preserve the historical behavior unless the user explicitly opts into a cap shared by
   // independent prime families. Existing per-family maxWorkers remains authoritative too.
@@ -398,6 +399,7 @@ const configSchema = z.object({
   multiAgent: z
     .object({
       enabled: z.boolean().optional().default(DEFAULT_MULTI_AGENT.enabled),
+      defaultRuntime: z.enum(['chatgpt-browser', 'codex-app-server']).optional().default('chatgpt-browser').catch('chatgpt-browser'),
     defaultModel: z.string().max(80).optional(),
     defaultReasoning: z.enum(['', ...REASONING_EFFORTS]).optional(),
       maxWorkers: z.number().int().min(1).max(8).optional().default(DEFAULT_MULTI_AGENT.maxWorkers),
@@ -411,6 +413,7 @@ const configSchema = z.object({
     .optional()
     .default({
       enabled: DEFAULT_MULTI_AGENT.enabled,
+      defaultRuntime: DEFAULT_MULTI_AGENT.defaultRuntime,
       maxWorkers: DEFAULT_MULTI_AGENT.maxWorkers,
       globalMaxWorkers: DEFAULT_MULTI_AGENT.globalMaxWorkers ?? 0,
       allowUnattributedCalls: DEFAULT_MULTI_AGENT.allowUnattributedCalls,
