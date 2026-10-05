@@ -106,8 +106,9 @@ export class RuntimeExecutionBroker {
         typeof binding.sessionId !== 'string' ||
         typeof binding.executionId !== 'string'
       ) continue;
-      const runtime = this.registry.get(binding.runtimeKind);
-      if (!runtime || runtime.sessionPersistence !== 'durable') continue;
+      // Browser command ids are process-local. Other provider-owned ids may be restored before
+      // that provider is registered during startup; start() will require the provider later.
+      if (binding.runtimeKind === 'chatgpt-browser') continue;
       this.bindings.set(binding.ownerId, { ...binding });
     }
   }
