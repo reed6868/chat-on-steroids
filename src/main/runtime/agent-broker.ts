@@ -90,7 +90,11 @@ export class RuntimeExecutionBroker {
 
   snapshot(): RuntimeOwnershipSnapshot {
     const bindings = [...this.bindings.values()]
-      .filter(binding => this.registry.require(binding.runtimeKind).sessionPersistence === 'durable')
+      .filter(binding => {
+        const runtime = this.registry.get(binding.runtimeKind);
+        return binding.runtimeKind !== 'chatgpt-browser' &&
+          (!runtime || runtime.sessionPersistence === 'durable');
+      })
       .map(binding => ({ ...binding }));
     return { version: 1, bindings };
   }
