@@ -21,11 +21,37 @@ app.whenReady().then(async () => {
   fs.mkdirSync(output, { recursive: true });
   const bundle = await build({ entryPoints: [path.join(root, 'src/renderer/recovery.ts')], bundle: true,
     write: false, format: 'iife', globalName: 'recovery', platform: 'browser' });
-  const win = new BrowserWindow({ show: false, width: 920, height: 380,
+  const settingsWin = new BrowserWindow({ show: false, width: 1000, height: 680,
     webPreferences: { sandbox: true, offscreen: true, backgroundThrottling: false } });
   const css = fs.readFileSync(path.join(root, 'src/renderer/styles.css'), 'utf8');
   const html = fs.readFileSync(path.join(root, 'src/renderer/index.html'), 'utf8')
-    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<link\b[^>]*>/gi, '');
+    .replace(/<script\\b[^>]*>[\\s\\S]*?<\\/script>/gi, '').replace(/<link\\b[^>]*>/gi, '');
+  await settingsWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html.replace('</head>', \`<style>\${css}</style></head>\`)));
+  const settingsOutput = path.join(root, 'outputs/runtime-settings');
+  fs.mkdirSync(settingsOutput, { recursive: true });
+  await settingsWin.webContents.executeJavaScript(\`(() => {
+    document.documentElement.dataset.theme = 'dark';
+    const runtime = document.getElementById('workerRuntime').closest('.setting');
+    const plan = document.getElementById('chatgptPlanStatus').closest('.setting');
+    const model = document.getElementById('workerModel').closest('.setting');
+    const reasoning = document.getElementById('workerReasoning').closest('.setting');
+    const pane = document.createElement('div'); pane.className = 'settings-surface pane';
+    pane.style.maxWidth = '860px'; pane.style.margin = '36px auto';
+    pane.append(model.cloneNode(true), reasoning.cloneNode(true), runtime.cloneNode(true), plan.cloneNode(true));
+    document.body.replaceChildren(pane);
+    document.body.style.cssText = 'display:block;padding:24px;background:var(--bg);overflow:hidden';
+    window.runtimeRows = [...pane.querySelectorAll('.setting')].slice(2);
+    return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  })()\`);
+  await settingsWin.webContents.executeJavaScript(\`runtimeRows.forEach(row => row.hidden = true); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))\`);
+  fs.writeFileSync(path.join(settingsOutput, 'before.png'), (await settingsWin.webContents.capturePage()).toPNG());
+  await settingsWin.webContents.executeJavaScript(\`runtimeRows.forEach(row => row.hidden = false); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))\`);
+  fs.writeFileSync(path.join(settingsOutput, 'after.png'), (await settingsWin.webContents.capturePage()).toPNG());
+  settingsWin.destroy();
+  throw new Error('intentional PR screenshot capture');
+
+  const win = new BrowserWindow({ show: false, width: 920, height: 380,
+    webPreferences: { sandbox: true, offscreen: true, backgroundThrottling: false } });
   await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html.replace('</head>', `<style>${css}</style></head>`)));
   await win.webContents.executeJavaScript(bundle.outputFiles[0].text);
   await win.webContents.executeJavaScript(`(() => {
