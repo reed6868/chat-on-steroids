@@ -49,7 +49,7 @@ import { planProgressText, type TaskProgressUpdate } from '../shared/task-progre
 import { TaskRequestError } from './task-request.js';
 import { GOAL_MARKER_INSTRUCTION, templateGoalDecision } from '../shared/goal-templates.js';
 import type { GoalBackend } from '../shared/types.js';
-import { createHash } from 'node:crypto';
+import { randomBytes, scrypt } from 'node:crypto';
 import { getConfig } from './config.js';
 import { getChatModels, refreshForUnoffered } from './chat-models.js';
 import { resolveChatModel } from '../shared/chat-models.js';
@@ -178,6 +178,21 @@ function retryableGoalFailure(error: string): boolean {
 }
 /** The catalogue is UI data; a dead provider must not leave the picker request hanging forever. */
 const MODEL_LIST_TIMEOUT_MS = 30_000;
+/**
+ * The catalogue cache lives only for this process, so its credential discriminator can use a
+ * process-local salt too. Use a password-hard KDF rather than a fast unsalted digest: custom
+ * provider keys are user-supplied and may be low entropy, and the cache never needs a stable
+ * fingerprint across restarts.
+ */
+const MODEL_CACHE_SCOPE_SALT = randomBytes(16);
+function modelCacheScopeFingerprint(key: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    scrypt(key, MODEL_CACHE_SCOPE_SALT, 32, (error, derived) => {
+      if (error) reject(error);
+      else resolve(derived.toString('hex'));
+    });
+  });
+}
 /** A single SSE record should be tiny; this still leaves ample room around the 12k reply cap. */
 const MAX_SSE_RECORD_CHARS = 64_000;
 /** Error prose is diagnostic only. Never buffer an arbitrary provider-controlled failure body. */
@@ -2834,11 +2849,10 @@ async function allGoalModels(): Promise<GoalModel[]> {
   // credential itself; replacing a key immediately changes the cache scope without retaining
   // either secret for the five-minute listing TTL. A custom endpoint joins the scope by URL,
   // so switching servers never serves the previous server's catalogue.
+  const keyFingerprint = key ? await modelCacheScopeFingerprint(key) : 'public';
   const keyScope = custom
-    ? `custom:${endpoint.baseUrl.trim()}:${key ? createHash('sha256').update(key).digest('hex') : 'public'}`
-    : key
-      ? createHash('sha256').update(key).digest('hex')
-      : 'public';
+    ? `custom:${endpoint.baseUrl.trim()}:${keyFingerprint}`
+    : keyFingerprint;
   if (modelCache && modelCache.keyScope === keyScope && Date.now() - modelCache.at < MODEL_CACHE_MS) {
     return modelCache.models;
   }
