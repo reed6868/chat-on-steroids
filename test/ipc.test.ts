@@ -1133,6 +1133,37 @@ describe('settings writes from more than one UI', () => {
     }, getConfig())).ok).toBe(false);
   });
 
+  it('persists the default agent runtime and does not let stale Settings snapshots reset it', async () => {
+    const base = defaultConfig();
+    await saveConfig(base);
+
+    const selected = await save({
+      ...base,
+      multiAgent: { ...base.multiAgent, defaultRuntime: 'codex-app-server' as const }
+    }, base);
+    expect(selected.ok, selected.error).toBe(true);
+    expect(getConfig().multiAgent.defaultRuntime).toBe('codex-app-server');
+
+    // A legacy/stale renderer can omit the new runtime field entirely. That omission is not
+    // an instruction to move an already-selected worker family back to the browser runtime.
+    const stale = structuredClone(base) as any;
+    delete stale.multiAgent.defaultRuntime;
+    const unrelated = await save({
+      ...stale,
+      ui: { ...stale.ui, minimizeToTray: !stale.ui.minimizeToTray }
+    }, stale);
+    expect(unrelated.ok, unrelated.error).toBe(true);
+    expect(getConfig().multiAgent.defaultRuntime).toBe('codex-app-server');
+
+    const current = getConfig();
+    const invalid = await save({
+      ...current,
+      multiAgent: { ...current.multiAgent, defaultRuntime: 'unsupported-runtime' }
+    }, current);
+    expect(invalid.ok).toBe(false);
+    expect(getConfig().multiAgent.defaultRuntime).toBe('codex-app-server');
+  });
+
   it('preserves a newer unattributed-call choice across an unrelated stale renderer save', async () => {
     const base = defaultConfig();
     await saveConfig(base);
