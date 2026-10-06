@@ -58,7 +58,9 @@ import { restoreRequestCorrelations } from './session/correlation.js';
 import { restoreBlockedChats } from './session/blocked-chats.js';
 import { restoreTrustedChats } from './session/trusted-chats.js';
 import { stopComputerHelper } from './computer/index.js';
-import { runtimeExecutionBroker } from './runtime/execution.js';
+import { agentRuntimeRegistry, runtimeExecutionBroker } from './runtime/execution.js';
+import { chatgptPlanAuth } from './chatgpt-plan-auth.js';
+import { ChatgptPlanCodexRuntime } from './runtime/chatgpt-plan-codex-runtime.js';
 import type { RuntimeOwnershipSnapshot } from './runtime/agent-broker.js';
 import {
   GOAL_OBJECTIVES_STATE,
@@ -111,6 +113,8 @@ let tray: Tray | null = null;
 let quitting = false;
 let shutdownStarted = false;
 let shutdownComplete = false;
+let chatgptPlanCodexRuntime: ChatgptPlanCodexRuntime | null = null;
+let dropChatgptPlanCodexRegistration: (() => void) | null = null;
 const usageWarmup = new AbortController();
 
 // One instance only: two copies would fight over the tunnel and the config file.
@@ -400,6 +404,10 @@ void app.whenReady().then(async () => {
   await loadConfig();
   await loadConnectorProof();
   await loadBrowserProof();
+  chatgptPlanCodexRuntime?.dispose();
+  dropChatgptPlanCodexRegistration?.();
+  chatgptPlanCodexRuntime = new ChatgptPlanCodexRuntime(chatgptPlanAuth, app.getVersion());
+  dropChatgptPlanCodexRegistration = agentRuntimeRegistry.register(chatgptPlanCodexRuntime);
   // Plugins ChatGPT already showed the refresh feature are created: Setup need not wait for a call.
   for (const surface of await enrolledPluginSurfaces()) notePluginInstalled(surface);
   await pluginManager.initialize(userData);
@@ -629,6 +637,12 @@ app.on('will-quit', (event) => {
         name: 'process cleanup',
         budgetMs: 15_000,
         run: () => [unifiedExecManager.terminateAllProcesses(), stopComputerHelper(), shutdownPetOverlay(), pluginManager.close(),
+          Promise.resolve().then(() => {
+            chatgptPlanCodexRuntime?.dispose();
+            chatgptPlanCodexRuntime = null;
+            dropChatgptPlanCodexRegistration?.();
+            dropChatgptPlanCodexRegistration = null;
+          }),
           Promise.resolve().then(() => loadedCosBrowser()?.stop())]
       },
       // Phase 3: recorder work can enqueue both session projections and named durable state.

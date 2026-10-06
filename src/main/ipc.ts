@@ -141,6 +141,11 @@ import { loadCosBrowser, syncCosBrowser } from './cos-browser/selection.js';
 import { onConnectorProofChange } from './connector-proof.js';
 import { opensInCosBrowser } from '../shared/cos-browser-sites.js';
 import { openInPreferredBrowser } from './browser.js';
+import { chatgptPlanAuth } from './chatgpt-plan-auth.js';
+import { agentRuntimeRegistry } from './runtime/execution.js';
+import { CODEX_APP_SERVER_RUNTIME } from './runtime/codex-app-server-runtime.js';
+import { ChatgptPlanCodexRuntime } from './runtime/chatgpt-plan-codex-runtime.js';
+import { verifyCodexRuntimeE2E } from './runtime/codex-e2e.js';
 import { manualDownloadUrl, markInstallOnQuit, onUpdateChange, updateStatus } from './update.js';
 import {
   getMacOSDesktopAccess,
@@ -516,6 +521,7 @@ async function buildState(): Promise<AppState> {
     hasApiKey: await hasSecret(setupApiKeySlot(config.tunnel.profileId)),
     hasGoalKey: await hasSecret('openRouterApiKey'),
     hasCustomProviderKey: await hasSecret('customProviderApiKey'),
+    chatgptPlan: await chatgptPlanAuth.status(),
     resolvedBinary: resolvedBinary(config),
     bundledTunnelVersion: bundledVersion(),
     bridge: await bridgeStatus(),
@@ -1142,6 +1148,30 @@ export function registerIpc(getWindow: () => BrowserWindow | null, quitToInstall
     if (!external && getConfig().ui.chatBrowser === 'cos' && opensInCosBrowser(url)) await openInPreferredBrowser(url, { reveal: true });
     else await shell.openExternal(url);
     return true;
+  });
+
+  handle('chatgptPlan:signIn', async () => {
+    if (!(await isEncryptionAvailable())) {
+      throw new Error('Secure credential storage is required for ChatGPT Plan sign-in');
+    }
+    await chatgptPlanAuth.signIn(async url => {
+      await shell.openExternal(url.href);
+    });
+    return buildState();
+  });
+
+  handle('chatgptPlan:signOut', async () => {
+    const result = await chatgptPlanAuth.signOut();
+    const runtime = agentRuntimeRegistry.get(CODEX_APP_SERVER_RUNTIME);
+    if (runtime instanceof ChatgptPlanCodexRuntime) runtime.dispose();
+    const next = await buildState();
+    next.chatgptPlan.revocationConfirmed = result.revoked;
+    return next;
+  });
+
+  handle('chatgptPlan:verifyCodex', async () => {
+    const runtime = agentRuntimeRegistry.require(CODEX_APP_SERVER_RUNTIME);
+    return verifyCodexRuntimeE2E(runtime);
   });
 
   // Setup's "Open ChatGPT" for Chrome, Edge or Brave: the chosen browser, where the extension is.

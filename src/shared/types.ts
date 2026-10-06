@@ -722,6 +722,15 @@ export function browserExtensionRequired(_config: Pick<Config, 'sessions' | 'mul
   return true;
 }
 
+export interface ChatgptPlanStatus {
+  signedIn: boolean;
+  planEnabled: boolean;
+  email: string | null;
+  expiresAt: number | null;
+  /** False only when local sign-out succeeded but remote refresh-token revocation could not be confirmed. */
+  revocationConfirmed?: boolean;
+}
+
 export interface AppState {
   config: Config;
   status: ConnectionStatus;
@@ -741,6 +750,8 @@ export interface AppState {
   hasGoalKey: boolean;
   /** True when a custom-provider key is stored. Only meaningful beside a custom endpoint, which may also run keyless. */
   hasCustomProviderKey: boolean;
+  /** ChatGPT Plan OAuth status only. Tokens never cross into shared state or the renderer. */
+  chatgptPlan: ChatgptPlanStatus;
   /** Resolved path of the tunnel binary we would run, or null if we cannot find one. */
   resolvedBinary: string | null;
   /** Version of the tunnel-client copy shipped inside the app, for diagnostics. */
