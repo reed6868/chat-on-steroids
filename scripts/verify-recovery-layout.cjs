@@ -21,8 +21,8 @@ app.whenReady().then(async () => {
   fs.mkdirSync(output, { recursive: true });
   const bundle = await build({ entryPoints: [path.join(root, 'src/renderer/recovery.ts')], bundle: true,
     write: false, format: 'iife', globalName: 'recovery', platform: 'browser' });
-  const settingsWin = new BrowserWindow({ show: false, width: 1000, height: 680,
-    webPreferences: { sandbox: true, offscreen: true, backgroundThrottling: false } });
+  const settingsWin = new BrowserWindow({ show: true, width: 1000, height: 680,
+    webPreferences: { sandbox: true, backgroundThrottling: false } });
   const css = fs.readFileSync(path.join(root, 'src/renderer/styles.css'), 'utf8');
   const html = fs.readFileSync(path.join(root, 'src/renderer/index.html'), 'utf8')
     .replace(/<script\\b[^>]*>[\\s\\S]*?<\\/script>/gi, '').replace(/<link\\b[^>]*>/gi, '');
@@ -44,9 +44,9 @@ app.whenReady().then(async () => {
     return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   })()\`);
   await settingsWin.webContents.executeJavaScript(\`runtimeRows.forEach(row => row.hidden = true); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))\`);
-  await captureOffscreenFrame(settingsWin, path.join(settingsOutput, 'before.png'));
+  fs.writeFileSync(path.join(settingsOutput, 'before.png'), (await settingsWin.webContents.capturePage()).toPNG());
   await settingsWin.webContents.executeJavaScript(\`runtimeRows.forEach(row => row.hidden = false); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))\`);
-  await captureOffscreenFrame(settingsWin, path.join(settingsOutput, 'after.png'));
+  fs.writeFileSync(path.join(settingsOutput, 'after.png'), (await settingsWin.webContents.capturePage()).toPNG());
   settingsWin.destroy();
   throw new Error('intentional PR screenshot capture');
 
