@@ -884,6 +884,10 @@ export interface AgentInfo {
   primeConversationId?: string;
   id: string;
   role: AgentRole;
+  /** Stable opaque owner for one agent's execution runtime. */
+  runtimeOwnerId?: string;
+  /** Runtime selected when this agent was created. */
+  runtimeKind?: string;
   /** Spawn label; reused assignments fall back to the stable worker id. */
   label: string;
   /** Spawn brief, or a bounded inbox preview for the current reused assignment. */
