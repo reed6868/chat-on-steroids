@@ -133,6 +133,43 @@ describe('Codex Responses -> ChatGPT Web provider', () => {
 
     browser.infer.mockResolvedValueOnce(JSON.stringify({
       type: 'tool_calls',
+      calls: [{ namespace: 'calendar', name: 'create_event', arguments: { title: 'after search' } }]
+    }));
+    const discovered = await provider.handleCodexBrowserResponse(baseRequest({
+      tools: [searchTool],
+      input: [
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Create an event.' }] },
+        { type: 'tool_search_call', call_id: 'search-1', execution: 'client', arguments: { query: 'calendar' } },
+        {
+          type: 'tool_search_output',
+          call_id: 'search-1',
+          status: 'completed',
+          execution: 'client',
+          tools: [{
+            type: 'namespace',
+            name: 'calendar',
+            description: 'Calendar tools',
+            tools: [{
+              type: 'function',
+              name: 'create_event',
+              defer_loading: true,
+              parameters: { type: 'object', properties: { title: { type: 'string' } } }
+            }]
+          }]
+        }
+      ]
+    }), new AbortController().signal);
+    expect(events(discovered.body)[1]).toMatchObject({
+      item: {
+        type: 'function_call',
+        namespace: 'calendar',
+        name: 'create_event',
+        arguments: JSON.stringify({ title: 'after search' })
+      }
+    });
+
+    browser.infer.mockResolvedValueOnce(JSON.stringify({
+      type: 'tool_calls',
       calls: [{ namespace: 'calendar', name: 'create_event', arguments: { title: 'x' } }]
     }));
     await expect(provider.handleCodexBrowserResponse(baseRequest({
