@@ -22,7 +22,7 @@ describe('runtime renderer controls', () => {
     expect(main).toContain('api.signInChatgptPlan()');
     expect(main).toContain('api.signOutChatgptPlan()');
     expect(main).toContain('api.verifyChatgptPlanCodex()');
-    expect(main).toContain("next.chatgptPlan.signedIn");
+    expect(main).toContain("plan.signedIn");
     expect(main).toContain("next.chatgptPlan ??");
     expect(main).toContain("next.secureStorage?.available !== true");
 
