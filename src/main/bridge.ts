@@ -48,7 +48,7 @@ import { pendingBrowserInputs, claimBrowserInput, acknowledgeBrowserInput, bindB
  * submit an action, read a local file, run a process or change a permission here.
  */
 
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import http from 'node:http';
 import type { BridgeStatus, CompanionDiagnostics, CompanionPageDiagnostics, CompanionTabDiagnostics, CompanionTraceEntry } from '../shared/types.js';
 import { recoveryBusyMs } from '../shared/recovery.js';
@@ -97,6 +97,8 @@ import {
   startGoalDraft
 } from './goal.js';
 import { logInfo, logWarn } from './logger.js';
+import { BrowserAgentRuntime, CHATGPT_BROWSER_RUNTIME } from './runtime/browser-runtime.js';
+import { agentRuntimeRegistry, runtimeExecutionBroker } from './runtime/execution.js';
 import {
   closeConversation,
   liveConversations,
@@ -181,6 +183,10 @@ import { ownCoreHint,
   noteAgentContextTokens,
   reactivateSilentCeilingRunForTerminal,
   persistCriticalSwarmNow,
+  failRuntimeWorker,
+  noteRuntimeWorkerRevived,
+  noteRuntimeWorkerStarted,
+  stageRuntimeWorkerFinish,
   stageWorkerConversationFinish,
   workerConversationGone,
   workerRevivalDeliveredSince,
@@ -5066,6 +5072,10 @@ let bridgeError: string | null = null;
 const bridgeDrains = new Set<Promise<void>>();
 let dropSpawnRequestListener: (() => void) | null = null;
 let dropReviveRequestListener: (() => void) | null = null;
+let dropRuntimeEventListener: (() => void) | null = null;
+let dropBrowserRuntimeRegistration: (() => void) | null = null;
+const runtimeOutputByOwner = new Map<string, string>();
+const MAX_RUNTIME_RESULT_CHARS = 64_000;
 
 function runStaleSwarmSweep(): Promise<boolean> {
   if (staleSweepInFlight) return staleSweepInFlight;
@@ -5276,15 +5286,112 @@ async function startBridgeOnce(epoch: number, prepared?: PreparedBridge): Promis
   dropSwarmChangeListener = onSwarmChange(retireInactiveWorkerRecovery);
   retireInactiveWorkerRecovery();
   dropSpawnRequestListener?.();
+  const browserRuntimeBindings = new Map<string, { runId: string; agentId: string }>();
+  dropBrowserRuntimeRegistration?.();
+  dropBrowserRuntimeRegistration = agentRuntimeRegistry.register(new BrowserAgentRuntime((request) => {
+    const binding = browserRuntimeBindings.get(request.executionId);
+    if (!binding) return null;
+    const command = queueWorkerBootstrap(
+      binding.agentId,
+      request.input,
+      request.model,
+      request.reasoningEffort,
+      binding.runId
+    );
+    return command?.id ?? null;
+  }));
   dropSpawnRequestListener = onSpawnRequest((workers) => {
-    for (const worker of workers) queueWorkerBootstrap(worker.id, worker.task, worker.model, worker.reasoningEffort, worker.runId);
+    for (const worker of workers) {
+      const executionId = randomUUID();
+      if (worker.runtimeKind === CHATGPT_BROWSER_RUNTIME) {
+        browserRuntimeBindings.set(executionId, { runId: worker.runId, agentId: worker.id });
+      }
+      void runtimeExecutionBroker.start({
+        ownerId: worker.runtimeOwnerId,
+        runtimeKind: worker.runtimeKind,
+        executionId,
+        input: worker.task,
+        model: worker.model,
+        reasoningEffort: worker.reasoningEffort
+      }).then(binding => {
+        if (!binding) {
+          failAgent(worker.id, `${worker.runtimeKind} runtime refused to start`, undefined, {}, worker.runId);
+        }
+      }).catch(error => {
+        failAgent(
+          worker.id,
+          `${worker.runtimeKind} runtime failed to start: ${error instanceof Error ? error.message : String(error)}`,
+          undefined,
+          {},
+          worker.runId
+        );
+      }).finally(() => browserRuntimeBindings.delete(executionId));
+    }
   });
   // The same replay contract for waking a worker that already has a chat. A run restored
   // from disk can hold a worker left in `waking` by a crash mid-revival; registering here
   // is the first moment anything can reopen that tab for it.
+  dropRuntimeEventListener?.();
+  dropRuntimeEventListener = runtimeExecutionBroker.onEvent((ownerId, event) => {
+    if (event.type === 'turn-started') {
+      runtimeOutputByOwner.set(ownerId, '');
+      noteRuntimeWorkerStarted(ownerId);
+      return;
+    }
+    if (event.type === 'output-delta') {
+      const current = runtimeOutputByOwner.get(ownerId) ?? '';
+      runtimeOutputByOwner.set(ownerId, (current + event.text).slice(-MAX_RUNTIME_RESULT_CHARS));
+      return;
+    }
+    if (event.type === 'turn-completed') {
+      const result = runtimeOutputByOwner.get(ownerId)?.trim() || 'Runtime turn completed without text output.';
+      runtimeOutputByOwner.delete(ownerId);
+      const staged = stageRuntimeWorkerFinish(ownerId, result);
+      const report = staged?.report ?? null;
+      if (!staged || !report) return;
+      void (async () => {
+        try {
+          if (!(await persistCriticalSwarmNow())) {
+            staged.rollback();
+            failRuntimeWorker(ownerId, 'Runtime result could not cross the durable finish barrier.');
+            return;
+          }
+          staged.commit();
+          await recordAgentMessage(report, 'sent');
+        } catch (error) {
+          staged.rollback();
+          logWarn(`runtime worker finish was not durable: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      })();
+      return;
+    }
+    if (event.type === 'turn-failed') {
+      runtimeOutputByOwner.delete(ownerId);
+      failRuntimeWorker(ownerId, event.message);
+    }
+  });
+
   dropReviveRequestListener?.();
   dropReviveRequestListener = onReviveRequest((revivals: WorkerRevival[]) => {
-    for (const revival of revivals) queueWorkerRevival(revival.id, revival.conversationId, revival.messageIds, revival.runId);
+    for (const revival of revivals) {
+      if (revival.runtimeKind === CHATGPT_BROWSER_RUNTIME) {
+        if (revival.conversationId) {
+          queueWorkerRevival(revival.id, revival.conversationId, revival.messageIds, revival.runId);
+        }
+        continue;
+      }
+      void runtimeExecutionBroker.send(revival.runtimeOwnerId, { text: revival.text }).then(async () => {
+        if (!noteRuntimeWorkerRevived(revival.runtimeOwnerId, revival.messageIds)) return;
+        if (!(await persistCriticalSwarmNow())) {
+          logWarn(`runtime revival for ${revival.id} reached the provider but was not durable`);
+        }
+      }).catch(error => {
+        failRuntimeWorker(
+          revival.runtimeOwnerId,
+          `${revival.runtimeKind} runtime could not accept follow-up work: ${error instanceof Error ? error.message : String(error)}`
+        );
+      });
+    }
   });
   // When a run ends — cleared in the app, finished, or taken over by another chat —
   // its worker chats must stop existing everywhere at once. A queued bootstrap that
@@ -5393,8 +5500,13 @@ export async function stopBridge(): Promise<void> {
     dropSwarmChangeListener = null;
     dropSpawnRequestListener?.();
     dropSpawnRequestListener = null;
+    dropBrowserRuntimeRegistration?.();
+    dropBrowserRuntimeRegistration = null;
     dropReviveRequestListener?.();
     dropReviveRequestListener = null;
+    dropRuntimeEventListener?.();
+    dropRuntimeEventListener = null;
+    runtimeOutputByOwner.clear();
     if (staleSwarmTimer) clearInterval(staleSwarmTimer);
     staleSwarmTimer = null;
     if (silenceTimer) clearTimeout(silenceTimer);
