@@ -87,18 +87,21 @@ export class RuntimeExecutionBroker {
 
   async send(ownerId: string, input: RuntimeInput): Promise<void> {
     const binding = this.requireBinding(ownerId);
-    await this.registry.require(binding.runtimeKind).send(binding.sessionId, input);
+    const runtime = this.runtimeForBinding(binding);
+    await runtime.send(binding.sessionId, input);
   }
 
   async cancel(ownerId: string): Promise<void> {
     const binding = this.requireBinding(ownerId);
-    await this.registry.require(binding.runtimeKind).cancel(binding.sessionId);
+    const runtime = this.runtimeForBinding(binding);
+    await runtime.cancel(binding.sessionId);
   }
 
   async close(ownerId: string): Promise<void> {
     const binding = this.bindings.get(ownerId);
     if (!binding) return;
-    await this.registry.require(binding.runtimeKind).close(binding.sessionId);
+    const runtime = this.runtimeForBinding(binding);
+    await runtime.close(binding.sessionId);
     this.bindings.delete(ownerId);
     this.changed();
   }
@@ -148,6 +151,15 @@ export class RuntimeExecutionBroker {
       for (const listener of this.eventListeners) listener(ownerId, event);
     });
     this.runtimeEventDrops.set(runtime, drop);
+  }
+
+  private runtimeForBinding(binding: RuntimeBinding): AgentRuntime {
+    const runtime = this.registry.require(binding.runtimeKind);
+    // Restored durable bindings can receive follow-up work before start() is called in this
+    // process. Reattach provider events before that first action so completion still reaches
+    // the opaque owner and the worker lifecycle.
+    this.watchRuntime(runtime);
+    return runtime;
   }
 
   private requireBinding(ownerId: string): RuntimeBinding {

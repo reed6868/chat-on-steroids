@@ -243,6 +243,7 @@ const settingsPatch = z.object({
   }),
   multiAgent: z.object({
     enabled: z.boolean(),
+    defaultRuntime: z.enum(['chatgpt-browser', 'codex-app-server']).optional(),
     defaultModel: z.string().max(80).optional(),
     defaultReasoning: z.enum(['', ...REASONING_EFFORTS]).optional(),
     maxWorkers: z.number().int().min(1).max(8),
@@ -422,6 +423,15 @@ function mergeSettings(current: Config, base: SettingsSnapshot, wanted: Settings
       )
     },
     multiAgent: {
+      // Older renderer snapshots have no runtime field. Omission is not consent to reset a
+      // runtime selected by a newer writer; only an explicit changed value moves future workers.
+      defaultRuntime: wanted.multiAgent.defaultRuntime === undefined
+        ? current.multiAgent.defaultRuntime ?? 'chatgpt-browser'
+        : pick(
+            current.multiAgent.defaultRuntime ?? 'chatgpt-browser',
+            base.multiAgent.defaultRuntime ?? 'chatgpt-browser',
+            wanted.multiAgent.defaultRuntime
+          ),
       defaultModel: pick(current.multiAgent.defaultModel, base.multiAgent.defaultModel, wanted.multiAgent.defaultModel),
       defaultReasoning: pick(current.multiAgent.defaultReasoning, base.multiAgent.defaultReasoning, wanted.multiAgent.defaultReasoning),
       enabled: pick(current.multiAgent.enabled, base.multiAgent.enabled, wanted.multiAgent.enabled),
