@@ -526,7 +526,7 @@ describe('durable user input ownership', () => {
     await vi.waitFor(async () => expect(await pendingBrowserInputs()).toHaveLength(1));
     const row = (await listInputs())[0]!;
     await vi.waitFor(() => expect(wake).toHaveBeenCalledWith(expect.objectContaining({ id: row.id, lifetime: 'temporary-planner', conversationId: null }), controller.signal));
-    expect(await claimBrowserInput(row.id, 'temporary-page', null)).toMatchObject({ text: 'PRIVATE PLANNER TASK', lifetime: 'temporary-planner' });
+    expect(await claimBrowserInput(row.id, 'temporary-page', null)).toMatchObject({ text: 'PRIVATE PLANNER TASK', lifetime: 'temporary-planner', coreMention: false });
     expect(await acknowledgeBrowserInput(row.id, 'temporary-page', null)).toBe(true);
     expect(await completeBrowserDecision(row.id, 'wrong-page', 'PRIVATE RESPONSE', null)).toBe(false);
     expect(await completeBrowserDecision(row.id, 'temporary-page', 'PRIVATE RESPONSE', null)).toBe(true);
