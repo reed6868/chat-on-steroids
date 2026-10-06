@@ -7,6 +7,7 @@ import {
   type ChatgptPlanAuthStore
 } from '../src/main/chatgpt-plan-auth.js';
 import { AgentRuntimeRegistry } from '../src/main/runtime/registry.js';
+import { ChatgptPlanCodexRuntime } from '../src/main/runtime/chatgpt-plan-codex-runtime.js';
 import { RuntimeExecutionBroker } from '../src/main/runtime/agent-broker.js';
 import {
   CodexAppServerRuntime,
@@ -241,7 +242,41 @@ class FakeCodexClient implements CodexAppServerClient {
   }
 }
 
+class RestoredThreadCodexClient implements CodexAppServerClient {
+  listeners = new Set<(value: CodexAppServerNotification) => void>();
+  ready = vi.fn(async () => {});
+  startThread = vi.fn(async () => 'unexpected-new-thread');
+  resumeThread = vi.fn(async (_threadId: string) => {});
+  startTurn = vi.fn(async () => 'turn-follow-up');
+  interruptTurn = vi.fn(async () => {});
+  dispose = vi.fn();
+
+  onNotification(listener: (value: CodexAppServerNotification) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+}
+
 describe('Codex runtime end-to-end gate', () => {
+  it('resumes a restored durable Codex thread before its first follow-up in a fresh app-server process', async () => {
+    const client = new RestoredThreadCodexClient();
+    const runtime = new ChatgptPlanCodexRuntime(
+      { accessToken: vi.fn(async () => 'access-1') } as any,
+      'test-version',
+      (() => client) as any
+    );
+
+    await runtime.send('thread-restored', { text: 'Continue after restart' });
+
+    expect(client.resumeThread).toHaveBeenCalledWith('thread-restored');
+    expect(client.startThread).not.toHaveBeenCalled();
+    expect(client.startTurn).toHaveBeenCalledWith(expect.objectContaining({
+      threadId: 'thread-restored',
+      text: 'Continue after restart'
+    }));
+    runtime.dispose();
+  });
+
   it('routes one owned agent execution through registry, Codex thread identity, and completion events', async () => {
     const registry = new AgentRuntimeRegistry();
     const runtime = new CodexAppServerRuntime(new FakeCodexClient());
