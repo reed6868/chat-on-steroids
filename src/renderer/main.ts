@@ -85,7 +85,7 @@ function paintChatgptPlanControls(next: AppState): void {
     : t('Not signed in yet.'));
   $<HTMLButtonElement>('chatgptPlanSignIn').hidden = plan.signedIn;
   $<HTMLButtonElement>('chatgptPlanSignOut').hidden = !plan.signedIn;
-  $<HTMLButtonElement>('chatgptPlanSignIn').disabled = plan.signedIn || next.secureStorage.available === false;
+  $<HTMLButtonElement>('chatgptPlanSignIn').disabled = plan.signedIn || next.secureStorage?.available !== true;
   $<HTMLButtonElement>('chatgptPlanSignOut').disabled = !plan.signedIn;
   $<HTMLButtonElement>('chatgptPlanVerifyCodex').disabled = !plan.signedIn;
   const codex = $<HTMLSelectElement>('workerRuntime').querySelector<HTMLOptionElement>('option[value="codex-app-server"]');
