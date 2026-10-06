@@ -1956,5 +1956,9 @@
   "{0} sub-agents in this round": "{0} tác nhân phụ trong vòng này",
   "The Chat On Steroids browser is still running": "Trình duyệt Chat On Steroids vẫn đang chạy",
   "Your chats keep going. Choose Show browser in the tray icon’s menu to bring it back.": "Các cuộc trò chuyện vẫn tiếp tục. Chọn “Hiện trình duyệt” trong menu của biểu tượng khay để mở lại.",
-  "Your chats keep going. Choose Show browser in the menu bar icon’s menu to bring it back.": "Các cuộc trò chuyện vẫn tiếp tục. Chọn “Hiện trình duyệt” trong menu của biểu tượng thanh menu để mở lại."
+  "Your chats keep going. Choose Show browser in the menu bar icon’s menu to bring it back.": "Các cuộc trò chuyện vẫn tiếp tục. Chọn “Hiện trình duyệt” trong menu của biểu tượng thanh menu để mở lại.",
+  "Default sub-agent runtime": "Môi trường chạy mặc định cho tác tử phụ",
+  "Browser stays the default. Codex app-server uses your signed-in ChatGPT Plan and keeps its provider thread durable across app restarts.": "Trình duyệt vẫn là mặc định. Codex app-server dùng gói ChatGPT mà bạn đã đăng nhập và giữ luồng của nhà cung cấp qua các lần khởi động lại ứng dụng.",
+  "ChatGPT Plan for Codex": "Gói ChatGPT cho Codex",
+  "Verify Codex": "Xác minh Codex"
 }
