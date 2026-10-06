@@ -1984,5 +1984,9 @@
   "The tunnel disconnected unexpectedly. Open Chat On Steroids to check the connection.": "Tünel bağlantısı beklenmedik şekilde kesildi. Bağlantıyı kontrol etmek için Chat On Steroids uygulamasını açın.",
   "Copy link": "Bağlantıyı kopyala",
   "Copy this chat's ChatGPT link": "Bu sohbetin ChatGPT bağlantısını kopyala",
-  "Link copied": "Bağlantı kopyalandı"
+  "Link copied": "Bağlantı kopyalandı",
+  "Default sub-agent runtime": "Varsayılan alt ajan çalışma zamanı",
+  "Browser stays the default. Codex app-server uses your signed-in ChatGPT Plan and keeps its provider thread durable across app restarts.": "Tarayıcı varsayılan olarak kalır. Codex app-server, oturum açtığınız ChatGPT Planını kullanır ve uygulama yeniden başlatıldığında sağlayıcı iş parçacığını korur.",
+  "ChatGPT Plan for Codex": "Codex için ChatGPT Planı",
+  "Verify Codex": "Codex'i doğrula"
 }
