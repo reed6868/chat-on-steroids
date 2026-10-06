@@ -23,6 +23,7 @@ describe('runtime renderer controls', () => {
     expect(main).toContain('api.signOutChatgptPlan()');
     expect(main).toContain('api.verifyChatgptPlanCodex()');
     expect(main).toContain("next.chatgptPlan.signedIn");
+    expect(main).toContain("next.chatgptPlan ??");
 
     for (const locale of ['de', 'es', 'fr', 'ja', 'ko', 'pt-BR', 'pt-PT', 'ru', 'tr', 'vi', 'zh-CN', 'zh-TW']) {
       const catalog = JSON.parse(await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'locales', `${locale}.json`), 'utf8'));
