@@ -41,11 +41,14 @@ app.whenReady().then(async () => {
     document.body.replaceChildren(pane);
     document.body.style.cssText = 'display:block;padding:24px;background:var(--bg);overflow:hidden';
     window.runtimeRows = [...pane.querySelectorAll('.setting')].slice(2);
-    return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return true;
   })()\`);
-  await settingsWin.webContents.executeJavaScript(\`runtimeRows.forEach(row => row.hidden = true); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))\`);
+  await new Promise(resolve => setTimeout(resolve, 500));
+  await settingsWin.webContents.executeJavaScript(\`runtimeRows.forEach(row => row.hidden = true); true\`);
+  await new Promise(resolve => setTimeout(resolve, 300));
   fs.writeFileSync(path.join(settingsOutput, 'before.png'), (await settingsWin.webContents.capturePage()).toPNG());
-  await settingsWin.webContents.executeJavaScript(\`runtimeRows.forEach(row => row.hidden = false); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))\`);
+  await settingsWin.webContents.executeJavaScript(\`runtimeRows.forEach(row => row.hidden = false); true\`);
+  await new Promise(resolve => setTimeout(resolve, 300));
   fs.writeFileSync(path.join(settingsOutput, 'after.png'), (await settingsWin.webContents.capturePage()).toPNG());
   settingsWin.destroy();
   throw new Error('intentional PR screenshot capture');
