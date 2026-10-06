@@ -57,6 +57,45 @@ declare global {
 }
 
 const api = window.api;
+
+async function runChatgptPlanAction(action: 'signIn' | 'signOut' | 'verify'): Promise<void> {
+  const signIn = $<HTMLButtonElement>('chatgptPlanSignIn');
+  const signOut = $<HTMLButtonElement>('chatgptPlanSignOut');
+  const verify = $<HTMLButtonElement>('chatgptPlanVerifyCodex');
+  signIn.disabled = true; signOut.disabled = true; verify.disabled = true;
+  try {
+    if (action === 'verify') {
+      const result = await run(api.verifyChatgptPlanCodex());
+      if (result) toast(t('Ready'));
+      return;
+    }
+    const next = await run(action === 'signIn' ? api.signInChatgptPlan() : api.signOutChatgptPlan());
+    if (next) apply(next);
+  } finally {
+    if (state) paintChatgptPlanControls(state);
+  }
+}
+
+function paintChatgptPlanControls(next: AppState): void {
+  const plan = next.chatgptPlan ?? { signedIn: false, planEnabled: false, email: null, expiresAt: null };
+  const selectedCodex = next.config.multiAgent.defaultRuntime === 'codex-app-server';
+  ui($('chatgptPlanStatus'), 'textContent', () => plan.signedIn
+    ? plan.email
+      ? `${t('Signed in.')} ${plan.email}`
+      : t('Signed in.')
+    : t('Not signed in yet.'));
+  $<HTMLButtonElement>('chatgptPlanSignIn').hidden = plan.signedIn;
+  $<HTMLButtonElement>('chatgptPlanSignOut').hidden = !plan.signedIn;
+  $<HTMLButtonElement>('chatgptPlanSignIn').disabled = plan.signedIn || next.secureStorage?.available !== true;
+  $<HTMLButtonElement>('chatgptPlanSignOut').disabled = !plan.signedIn;
+  $<HTMLButtonElement>('chatgptPlanVerifyCodex').disabled = !plan.signedIn;
+  const codex = $<HTMLSelectElement>('workerRuntime').querySelector<HTMLOptionElement>('option[value="codex-app-server"]');
+  if (codex) codex.disabled = !plan.signedIn && !selectedCodex;
+}
+
+$('chatgptPlanSignIn').addEventListener('click', () => void runChatgptPlanAction('signIn'));
+$('chatgptPlanSignOut').addEventListener('click', () => void runChatgptPlanAction('signOut'));
+$('chatgptPlanVerifyCodex').addEventListener('click', () => void runChatgptPlanAction('verify'));
 // First: main announces a Keychain read before it starts and may not get through again until it ends.
 initKeychainNotice(api);
 initLanguage();
@@ -1709,6 +1748,7 @@ function apply(next: AppState): void {
     : t("Recent activity only. File contents and credentials are never recorded."));
 
   chatApply(next, previousState?.config);
+  paintChatgptPlanControls(next);
 
   applying = false;
 }
