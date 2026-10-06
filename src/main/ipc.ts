@@ -142,6 +142,11 @@ import { loadCosBrowser, syncCosBrowser } from './cos-browser/selection.js';
 import { onConnectorProofChange } from './connector-proof.js';
 import { opensInCosBrowser } from '../shared/cos-browser-sites.js';
 import { openInPreferredBrowser } from './browser.js';
+import { chatgptPlanAuth } from './chatgpt-plan-auth.js';
+import { agentRuntimeRegistry } from './runtime/execution.js';
+import { CODEX_APP_SERVER_RUNTIME } from './runtime/codex-app-server-runtime.js';
+import { ChatgptPlanCodexRuntime } from './runtime/chatgpt-plan-codex-runtime.js';
+import { verifyCodexRuntimeE2E } from './runtime/codex-e2e.js';
 import { checkForUpdatesIfStale, manualDownloadUrl, markInstallOnQuit, onUpdateChange, updateStatus } from './update.js';
 import {
   getMacOSDesktopAccess,
@@ -239,6 +244,7 @@ const settingsPatch = z.object({
   }),
   multiAgent: z.object({
     enabled: z.boolean(),
+    defaultRuntime: z.enum(['chatgpt-browser', 'codex-app-server']).optional(),
     defaultModel: z.string().max(80).optional(),
     defaultReasoning: z.enum(['', ...REASONING_EFFORTS]).optional(),
     maxWorkers: z.number().int().min(1).max(8),
@@ -418,6 +424,15 @@ function mergeSettings(current: Config, base: SettingsSnapshot, wanted: Settings
       )
     },
     multiAgent: {
+      // Older renderer snapshots have no runtime field. Omission is not consent to reset a
+      // runtime selected by a newer writer; only an explicit changed value moves future workers.
+      defaultRuntime: wanted.multiAgent.defaultRuntime === undefined
+        ? current.multiAgent.defaultRuntime ?? 'chatgpt-browser'
+        : pick(
+            current.multiAgent.defaultRuntime ?? 'chatgpt-browser',
+            base.multiAgent.defaultRuntime ?? 'chatgpt-browser',
+            wanted.multiAgent.defaultRuntime
+          ),
       defaultModel: pick(current.multiAgent.defaultModel, base.multiAgent.defaultModel, wanted.multiAgent.defaultModel),
       defaultReasoning: pick(current.multiAgent.defaultReasoning, base.multiAgent.defaultReasoning, wanted.multiAgent.defaultReasoning),
       enabled: pick(current.multiAgent.enabled, base.multiAgent.enabled, wanted.multiAgent.enabled),
@@ -517,6 +532,7 @@ async function buildState(): Promise<AppState> {
     hasApiKey: await hasSecret(setupApiKeySlot(config.tunnel.profileId)),
     hasGoalKey: await hasSecret('openRouterApiKey'),
     hasCustomProviderKey: await hasSecret('customProviderApiKey'),
+    chatgptPlan: await chatgptPlanAuth.status(),
     resolvedBinary: resolvedBinary(config),
     bundledTunnelVersion: bundledVersion(),
     bridge: await bridgeStatus(),
@@ -1150,6 +1166,30 @@ export function registerIpc(getWindow: () => BrowserWindow | null, quitToInstall
     if (!external && getConfig().ui.chatBrowser === 'cos' && opensInCosBrowser(url)) await openInPreferredBrowser(url, { reveal: true });
     else await shell.openExternal(url);
     return true;
+  });
+
+  handle('chatgptPlan:signIn', async () => {
+    if (!(await isEncryptionAvailable())) {
+      throw new Error('Secure credential storage is required for ChatGPT Plan sign-in');
+    }
+    await chatgptPlanAuth.signIn(async url => {
+      await shell.openExternal(url.href);
+    });
+    return buildState();
+  });
+
+  handle('chatgptPlan:signOut', async () => {
+    const result = await chatgptPlanAuth.signOut();
+    const runtime = agentRuntimeRegistry.get(CODEX_APP_SERVER_RUNTIME);
+    if (runtime instanceof ChatgptPlanCodexRuntime) runtime.dispose();
+    const next = await buildState();
+    next.chatgptPlan.revocationConfirmed = result.revoked;
+    return next;
+  });
+
+  handle('chatgptPlan:verifyCodex', async () => {
+    const runtime = agentRuntimeRegistry.require(CODEX_APP_SERVER_RUNTIME);
+    return verifyCodexRuntimeE2E(runtime);
   });
 
   // Setup's "Open ChatGPT" for Chrome, Edge or Brave: the chosen browser, where the extension is.
