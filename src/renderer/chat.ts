@@ -4424,6 +4424,7 @@ export function chatSettingsPatch(current: Config): {
         : DEFAULT_HANDOFF_LENGTH
     },
     multiAgent: {
+      defaultRuntime: $<HTMLSelectElement>('workerRuntime').value as Config['multiAgent']['defaultRuntime'],
       defaultModel: $<HTMLSelectElement>('workerModel').value,
       defaultReasoning: $<HTMLSelectElement>('workerReasoning').value as Config['multiAgent']['defaultReasoning'],
       // The exposure switch lives with every other ChatGPT tool switch, on Home. Settings owns
@@ -4828,7 +4829,7 @@ const CHAT_INPUTS = [
   'chatBrowser', 'browserBridgePort',
   'goalIncludeToolCalls',
   'planBackend',
-  'finishTool', 'finishLeadMinutes', 'defaultChatModel', 'defaultChatReasoning', 'workerModel', 'workerReasoning', 'autoSelectSkills', 'backgroundChats', 'browserOnly', 'autoRefreshPlugins',
+  'finishTool', 'finishLeadMinutes', 'defaultChatModel', 'defaultChatReasoning', 'workerRuntime', 'workerModel', 'workerReasoning', 'autoSelectSkills', 'backgroundChats', 'browserOnly', 'autoRefreshPlugins',
   'goalBackend',
   'loopBackend',
   'helperModel', 'helperReasoning',
@@ -4911,6 +4912,7 @@ export function chatApply(state: AppState, previous?: Config): void {
     previous?.multiAgent.endSleepingWorkerProcesses
   );
 
+  applyChatValue($<HTMLSelectElement>('workerRuntime'), config.multiAgent.defaultRuntime ?? 'chatgpt-browser', previous?.multiAgent.defaultRuntime ?? 'chatgpt-browser');
   applyChatValue($<HTMLSelectElement>('workerModel'), config.multiAgent.defaultModel ?? '', previous?.multiAgent.defaultModel);
   applyChatValue($<HTMLSelectElement>('workerReasoning'), config.multiAgent.defaultReasoning ?? '', previous?.multiAgent.defaultReasoning);
   applyChatValue($<HTMLSelectElement>('defaultChatModel'), config.ui.defaultChatModel ?? '', previous?.ui.defaultChatModel);
