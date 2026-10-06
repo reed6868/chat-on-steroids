@@ -85,6 +85,9 @@ losing the project, history, workers or queued instructions when a chat grows to
 ### Product-wide invariants
 
 - One meaningful fact has one owner. Other modules may project it, never independently decide it.
+- Agent role identity and runtime execution identity are separate. `runId` / worker ids belong to the agent broker; `runtimeOwnerId` is the opaque join key into runtime ownership; provider session ids such as Browser command ids or Codex thread ids remain provider-owned. New agents lock their selected runtime, and durable provider bindings restore independently of browser conversation identity.
+- Runtime completion is authoritative only after it crosses the same broker durability barrier as browser-owned completion. Provider events map back through `runtimeOwnerId`; runtimes never learn `runId`, worker ids, or ChatGPT conversation ids. Durable runtime follow-up work reuses its provider session instead of reopening a browser chat. After process restoration, the broker reattaches provider event routing before acting on a restored binding, and a fresh durable provider adapter resumes the bound session before its first follow-up.
+- ChatGPT Plan OAuth credentials are main-process secrets. The renderer may receive only token-free status (`signedIn`, plan permission, account label, expiry/revocation state); access, refresh, and retained ID tokens stay behind `secrets.ts`/Electron safe storage and are supplied to Codex app-server only through its child environment.
 - User corrections extend the original task. Plans and automation must not quietly narrow it to
   whatever the last assistant answer happened to describe.
 - Visible progress is truthful: no invented completion, lost attachment disguised as a file
@@ -149,7 +152,7 @@ The renderer has no direct filesystem, command, secret or generic main-process a
 | Browser observation/action | Conversation + Chrome document id + navigation epoch + message/turn id. |
 | Session continuation | Local session id + continuation token + A/B lineage + send checkpoints. |
 | Input | Outbox UUID + local session + elected browser owner or exact tool recipient. |
-| Agent routing | Exact prime family/run incarnation + worker conversation; `worker-1` alone is ambiguous. |
+| Agent routing | Exact prime family/run incarnation + opaque `runtimeOwnerId`; Browser conversation and Codex thread ids remain provider-owned session identities. |
 | Workspace | Proven session/project or caller/agent key + cwd. |
 | Terminal | Durable local session principal → process session id. |
 | Renderer | Selected session/draft key + load generation. |
@@ -195,7 +198,7 @@ define the tool/config/wire contract. README and worklogs are secondary and can 
 | Tool capabilities | Current `defaultConfig()` starts all Core capability flags on; read-only off. | Omitted legacy flags use conservative `DEFAULT_CAPABILITIES`. Malformed existing config is conservative recovery, not fresh consent. |
 | Recording | On, 30-day retention. | Explicit Off stays Off; retention still applies to old history. |
 | Context / compaction | Advisory 400,000; limit rounded from advisory × 4/3; auto-compaction on at advisory. | Estimated local units. Automatic execution additionally requires live work, current ownership and eligible model/role. |
-| Multi-agent | On, 2 simultaneous slot-holding workers **per family**, configured hard max 8; global worker admission cap Off (`0`, configurable through 64). | Legacy absent enabled/allow-unattributed fields remain false; an absent global cap remains Off. Existing choices stay exact. |
+| Multi-agent | On, 2 simultaneous slot-holding workers **per family**, configured hard max 8; global worker admission cap Off (`0`, configurable through 64); default worker runtime is ChatGPT Browser. | Legacy absent enabled/allow-unattributed fields remain false; an absent global cap remains Off. Existing choices stay exact: a Settings snapshot that omits `defaultRuntime` is not a request to reset a newer runtime selection. Codex runtime requires an explicit worker/runtime choice plus valid ChatGPT Plan OAuth. |
 | Wait for sub-agents | Off. | When on, a Goal/Loop chat's next automatic step waits for the workers that exact chat started. A chat with no run, or a run with no workers, waits either way. See §16. |
 | Unattributed allowance | True on first launch. | Relaxes ambiguity fences only; known blocked/retired/superseded ownership stays enforced. |
 | Auto-select Skills | Off. | When on, ordinary human-authored input with no explicit Skill directive may select at most one managed/imported Skill whose full id/name/display name is literally present after case and hyphen/whitespace normalization. Ambiguous or unnamed input selects none; explicit `/id` or `/prompt id` always wins. |
@@ -241,6 +244,7 @@ Paths in this section are repository-relative. Most mechanisms have `main`, `sha
 | Continuation | `src/main/session/{continuation,resume-gate,handoff,handoff-prompt}.ts`: A→B transaction, send ambiguity and exact brief. |
 | Automation | `src/main/goal.ts`, `src/shared/{goal,goal-templates}.ts`: objectives, switches, obligations, provider/helper decisions. |
 | Agents | `src/main/agents.ts`, `src/renderer/{agent-panel,agent-communication}.ts`: independent prime families, staged mutations and addressed messages. |
+| Agent runtimes | `src/main/runtime/{agent-runtime,registry,execution,agent-broker,browser-runtime,codex-app-server-runtime,codex-app-server-client}.ts`: provider-neutral execution selection, opaque runtime ownership, provider session identity and adapters. Agent roles remain owned by `agents.ts`; runtime providers must not encode coordinator/worker semantics. |
 | Browser orchestration | `src/main/bridge.ts`, `browser.ts`, `browser-startup.ts`, `browser-wake.ts`, `browser-window-layout.ts`, `browser-preferences.ts`; `src/shared/browser-preferences.ts`. |
 | Built-in browser | `src/main/cos-browser/` (`selection.ts` opt-in loading, `index.ts` lifecycle, `host.ts` windows/tabs/extension/sign-in, `tab-model.ts`, `chrome-api.ts`, `extension-worker.ts`, `match-pattern.ts`, `sign-in.ts`, `sign-in-transfer.ts`); `src/preload/cos-browser{,-worker,-sign-in}.ts`; `src/renderer/cos-browser.{html,ts,css}` toolbar and `cos-browser-sign-in.{html,ts,css}` Google sign-in card; `src/shared/cos-browser-sites.ts`. See §13 Built-in browser. |
 | Extension | `extension/{manifest.json,chatgpt-dom.js,content.js,fiber.js,background.js,usage.js,overlay.css,popup.html,popup.css,popup.js}`: injection worlds, native observations/actions, journal and UI. |
