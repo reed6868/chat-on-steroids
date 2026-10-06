@@ -1,4 +1,4 @@
-import type { RuntimeInput, RuntimeSession, RuntimeStartOptions } from './agent-runtime.js';
+import type { AgentRuntime, RuntimeEvent, RuntimeInput, RuntimeSession, RuntimeStartOptions } from './agent-runtime.js';
 import type { AgentRuntimeRegistry } from './registry.js';
 
 export interface RuntimeExecutionRequest extends RuntimeStartOptions {
@@ -21,12 +21,21 @@ export interface RuntimeOwnershipSnapshot {
 export class RuntimeExecutionBroker {
   private readonly bindings = new Map<string, RuntimeBinding>();
   private readonly listeners = new Set<() => void>();
+  private readonly eventListeners = new Set<(ownerId: string, event: RuntimeEvent) => void>();
+  private readonly runtimeEventDrops = new Map<AgentRuntime, () => void>();
+  private readonly pendingExecutions = new Map<string, string>();
+  private readonly pendingSessionOwners = new Map<string, string>();
 
   constructor(private readonly registry: AgentRuntimeRegistry) {}
 
   onChange(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  onEvent(listener: (ownerId: string, event: RuntimeEvent) => void): () => void {
+    this.eventListeners.add(listener);
+    return () => this.eventListeners.delete(listener);
   }
 
   private changed(): void {
@@ -40,22 +49,27 @@ export class RuntimeExecutionBroker {
 
   async start(request: RuntimeExecutionRequest): Promise<RuntimeBinding | null> {
     const runtime = this.registry.require(request.runtimeKind);
+    this.watchRuntime(runtime);
     const existing = this.bindings.get(request.ownerId);
     let session: RuntimeSession | null;
-
-    if (existing) {
-      if (existing.runtimeKind !== request.runtimeKind) {
-        throw new Error(
-          `Runtime owner ${request.ownerId} is already bound to ${existing.runtimeKind}`
-        );
-      }
-      if (runtime.sessionPersistence === 'durable') {
-        session = await runtime.resume(existing.sessionId);
+    this.pendingExecutions.set(request.executionId, request.ownerId);
+    try {
+      if (existing) {
+        if (existing.runtimeKind !== request.runtimeKind) {
+          throw new Error(
+            `Runtime owner ${request.ownerId} is already bound to ${existing.runtimeKind}`
+          );
+        }
+        if (runtime.sessionPersistence === 'durable') {
+          session = await runtime.resume(existing.sessionId);
+        } else {
+          session = await runtime.start(request);
+        }
       } else {
         session = await runtime.start(request);
       }
-    } else {
-      session = await runtime.start(request);
+    } finally {
+      this.pendingExecutions.delete(request.executionId);
     }
 
     if (!session) return null;
@@ -66,6 +80,7 @@ export class RuntimeExecutionBroker {
       executionId: request.executionId
     };
     this.bindings.set(request.ownerId, binding);
+    this.pendingSessionOwners.delete(session.id);
     this.changed();
     return { ...binding };
   }
@@ -115,6 +130,24 @@ export class RuntimeExecutionBroker {
       if (binding.runtimeKind === 'chatgpt-browser') continue;
       this.bindings.set(binding.ownerId, { ...binding });
     }
+  }
+
+  private watchRuntime(runtime: AgentRuntime): void {
+    if (this.runtimeEventDrops.has(runtime)) return;
+    const drop = runtime.onEvent(event => {
+      let ownerId: string | undefined;
+      if (event.type === 'session-started') {
+        ownerId = this.pendingExecutions.get(event.session.executionId) ??
+          [...this.bindings.values()].find(binding => binding.sessionId === event.session.id)?.ownerId;
+        if (ownerId) this.pendingSessionOwners.set(event.session.id, ownerId);
+      } else {
+        ownerId = [...this.bindings.values()].find(binding => binding.sessionId === event.sessionId)?.ownerId ??
+          this.pendingSessionOwners.get(event.sessionId);
+      }
+      if (!ownerId) return;
+      for (const listener of this.eventListeners) listener(ownerId, event);
+    });
+    this.runtimeEventDrops.set(runtime, drop);
   }
 
   private requireBinding(ownerId: string): RuntimeBinding {
