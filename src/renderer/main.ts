@@ -76,7 +76,7 @@ async function runChatgptPlanAction(action: 'signIn' | 'signOut' | 'verify'): Pr
 }
 
 function paintChatgptPlanControls(next: AppState): void {
-  const plan = next.chatgptPlan;
+  const plan = next.chatgptPlan ?? { signedIn: false, planEnabled: false, email: null, expiresAt: null };
   const selectedCodex = next.config.multiAgent.defaultRuntime === 'codex-app-server';
   ui($('chatgptPlanStatus'), 'textContent', () => plan.signedIn
     ? plan.email
