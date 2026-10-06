@@ -96,6 +96,66 @@ describe('Codex Responses -> ChatGPT Web provider', () => {
     expect(streamed[1]?.item?.call_id).toMatch(/^call_[0-9a-f-]{36}$/);
   });
 
+  it('supports Codex client-side tool_search without exposing deferred tools as direct calls', async () => {
+    const searchTool = {
+      type: 'tool_search',
+      execution: 'client',
+      description: 'Search deferred tool metadata.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string' },
+          limit: { type: 'number' }
+        },
+        required: ['query'],
+        additionalProperties: false
+      }
+    };
+    browser.infer.mockResolvedValueOnce(JSON.stringify({
+      type: 'tool_calls',
+      calls: [{ name: 'tool_search', arguments: { query: 'calendar', limit: 1 } }]
+    }));
+
+    const reply = await provider.handleCodexBrowserResponse(
+      baseRequest({ tools: [searchTool] }),
+      new AbortController().signal
+    );
+    const streamed = events(reply.body);
+    expect(streamed[1]).toMatchObject({
+      type: 'response.output_item.done',
+      item: {
+        type: 'tool_search_call',
+        execution: 'client',
+        arguments: { query: 'calendar', limit: 1 }
+      }
+    });
+    expect(streamed[1]?.item?.call_id).toMatch(/^call_[0-9a-f-]{36}$/);
+
+    browser.infer.mockResolvedValueOnce(JSON.stringify({
+      type: 'tool_calls',
+      calls: [{ namespace: 'calendar', name: 'create_event', arguments: { title: 'x' } }]
+    }));
+    await expect(provider.handleCodexBrowserResponse(baseRequest({
+      tools: [
+        searchTool,
+        {
+          type: 'namespace',
+          name: 'calendar',
+          description: 'Calendar tools',
+          tools: [{
+            type: 'function',
+            name: 'create_event',
+            defer_loading: true,
+            parameters: { type: 'object', properties: { title: { type: 'string' } } }
+          }]
+        }
+      ]
+    }), new AbortController().signal)).rejects.toMatchObject({
+      status: 502,
+      code: 'invalid_model_output'
+    });
+  });
+
   it('fails closed on malformed output, unknown tools, tool-choice violations, and forbidden parallel calls', async () => {
     const cases: Array<[string, unknown, Record<string, unknown>]> = [
       ['not JSON', 'plain prose', {}],
