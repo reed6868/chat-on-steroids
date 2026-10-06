@@ -50,16 +50,18 @@ export class ChatgptPlanCodexRuntime implements AgentRuntime {
   }
 
   async send(sessionId: string, input: RuntimeInput): Promise<void> {
-    const { runtime, replaced } = await this.ensureRuntime();
-    if (replaced) await runtime.resume(sessionId);
+    const { runtime, fresh } = await this.ensureRuntime();
+    // A restored broker binding can reach send() before this process has ever called start() or
+    // resume(). Hydrate that durable provider thread before the adapter accepts its first turn.
+    if (fresh) await runtime.resume(sessionId);
     await runtime.send(sessionId, input);
   }
 
   async cancel(sessionId: string): Promise<void> {
-    const { runtime, replaced } = await this.ensureRuntime();
-    // A refreshed process cannot interrupt a turn owned by the retired process. Resuming first
-    // restores durable thread ownership and makes a subsequent turn/cancel sequence coherent.
-    if (replaced) await runtime.resume(sessionId);
+    const { runtime, fresh } = await this.ensureRuntime();
+    // A fresh/refreshed process cannot interrupt a turn owned by its predecessor. Resuming first
+    // restores durable thread ownership and makes the local cancellation boundary coherent.
+    if (fresh) await runtime.resume(sessionId);
     await runtime.cancel(sessionId);
   }
 
@@ -87,9 +89,9 @@ export class ChatgptPlanCodexRuntime implements AgentRuntime {
     this.token = null;
   }
 
-  private async ensureRuntime(): Promise<{ runtime: CodexAppServerRuntime; replaced: boolean }> {
+  private async ensureRuntime(): Promise<{ runtime: CodexAppServerRuntime; fresh: boolean }> {
     const accessToken = await this.auth.accessToken();
-    if (this.runtime && this.token === accessToken) return { runtime: this.runtime, replaced: false };
+    if (this.runtime && this.token === accessToken) return { runtime: this.runtime, fresh: false };
 
     this.dropEvents?.();
     this.dropEvents = null;
@@ -102,8 +104,7 @@ export class ChatgptPlanCodexRuntime implements AgentRuntime {
     });
     this.client = client;
     this.runtime = runtime;
-    const replaced = this.token !== null;
     this.token = accessToken;
-    return { runtime, replaced };
+    return { runtime, fresh: true };
   }
 }
