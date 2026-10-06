@@ -65,7 +65,7 @@ async function runChatgptPlanAction(action: 'signIn' | 'signOut' | 'verify'): Pr
   try {
     if (action === 'verify') {
       const result = await run(api.verifyChatgptPlanCodex());
-      if (result) toast(t('Codex verification completed.'));
+      if (result) toast(t('Done'));
       return;
     }
     const next = await run(action === 'signIn' ? api.signInChatgptPlan() : api.signOutChatgptPlan());
@@ -80,9 +80,9 @@ function paintChatgptPlanControls(next: AppState): void {
   const selectedCodex = next.config.multiAgent.defaultRuntime === 'codex-app-server';
   ui($('chatgptPlanStatus'), 'textContent', () => plan.signedIn
     ? plan.email
-      ? t('Signed in as {0}.', [plan.email])
-      : t('Signed in with ChatGPT Plan.')
-    : t('Not signed in. Codex workers require ChatGPT Plan sign-in.'));
+      ? `${t('Signed in.')} ${plan.email}`
+      : t('Signed in.')
+    : t('Not signed in yet.'));
   $<HTMLButtonElement>('chatgptPlanSignIn').hidden = plan.signedIn;
   $<HTMLButtonElement>('chatgptPlanSignOut').hidden = !plan.signedIn;
   $<HTMLButtonElement>('chatgptPlanSignIn').disabled = plan.signedIn || next.secureStorage.available === false;
