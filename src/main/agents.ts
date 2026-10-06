@@ -538,6 +538,8 @@ export interface WorkerSpawn {
   runId: string;
   primeConversationId: string | null;
   id: string;
+  runtimeOwnerId: string;
+  runtimeKind: 'chatgpt-browser' | 'codex-app-server';
   task: string;
   /** Requested ChatGPT model slug, or null for the account default. */
   model: string | null;
@@ -552,7 +554,16 @@ export function pendingWorkerSpawns(): WorkerSpawn[] {
       (agent) =>
         agent.info.role === 'worker' && agent.info.state === 'invited' && !unpublishedAgents.has(agent)
     )
-    .map((agent) => ({ runId: run.runId, primeConversationId: run.primeConversationId, id: agent.info.id, task: agent.info.task, model: agent.info.model, reasoningEffort: agent.info.reasoningEffort })));
+    .map((agent) => ({
+      runId: run.runId,
+      primeConversationId: run.primeConversationId,
+      id: agent.info.id,
+      runtimeOwnerId: agent.info.runtimeOwnerId!,
+      runtimeKind: (agent.info.runtimeKind ?? 'chatgpt-browser') as 'chatgpt-browser' | 'codex-app-server',
+      task: agent.info.task,
+      model: agent.info.model,
+      reasoningEffort: agent.info.reasoningEffort
+    })));
 }
 
 /**
@@ -1291,11 +1302,20 @@ Your task:
 ${task}`;
 }
 
-function makeWorker(id: string, label: string, task: string, model: string | null, reasoningEffort: ReasoningEffort | null): Agent {
+function makeWorker(
+  id: string,
+  label: string,
+  task: string,
+  model: string | null,
+  reasoningEffort: ReasoningEffort | null,
+  runtimeKind: 'chatgpt-browser' | 'codex-app-server'
+): Agent {
   return {
     info: {
       id,
       role: 'worker',
+      runtimeOwnerId: randomUUID(),
+      runtimeKind,
       label,
       task,
       model,
@@ -1787,7 +1807,16 @@ export function requestWorkerBootstraps(ids: readonly string[], runId?: string):
         !unpublishedAgents.has(agent) &&
         wanted.has(agent.info.id)
     )
-    .map((agent) => ({ runId: run.runId, primeConversationId: run.primeConversationId, id: agent.info.id, task: agent.info.task, model: agent.info.model, reasoningEffort: agent.info.reasoningEffort }));
+    .map((agent) => ({
+      runId: run.runId,
+      primeConversationId: run.primeConversationId,
+      id: agent.info.id,
+      runtimeOwnerId: agent.info.runtimeOwnerId!,
+      runtimeKind: (agent.info.runtimeKind ?? 'chatgpt-browser') as 'chatgpt-browser' | 'codex-app-server',
+      task: agent.info.task,
+      model: agent.info.model,
+      reasoningEffort: agent.info.reasoningEffort
+    }));
   if (owed.length === 0) return 0;
   if (spawnRequest) spawnRequest(owed);
   else logWarn('multi-agent: no browser extension is paired, so worker chats cannot be opened automatically');
@@ -1958,7 +1987,8 @@ export function spawn(input: SpawnInput, options: SpawnOptions = {}): SpawnResul
   const createdAgents: Agent[] = [];
   for (const [index, worker] of planned.entries()) {
     const id = ids[index] as string;
-    const agent = makeWorker(id, worker.label || id, worker.task, worker.model, worker.reasoningEffort);
+    const runtimeKind = getConfig().multiAgent.defaultRuntime ?? 'chatgpt-browser';
+    const agent = makeWorker(id, worker.label || id, worker.task, worker.model, worker.reasoningEffort, runtimeKind);
     activeRun.agents.set(id, agent);
     stampOwner(activeRun);
     // A worker starts in the folder the prime was working in, so its first call can use the
@@ -3015,6 +3045,84 @@ export function stageWorkerConversationFinish(conversationId: string, result: st
   return stageFinish(agent, result, acknowledged);
 }
 
+function runtimeWorker(runtimeOwnerId: string): { run: Run; agent: Agent } | null {
+  for (const run of runs.values()) {
+    for (const agent of run.agents.values()) {
+      if (agent.info.role === 'worker' && agent.info.runtimeOwnerId === runtimeOwnerId) return { run, agent };
+    }
+  }
+  return null;
+}
+
+/** Provider-owned execution proved that this worker has started a turn. */
+export function noteRuntimeWorkerStarted(runtimeOwnerId: string): AgentInfo | null {
+  const owned = runtimeWorker(runtimeOwnerId);
+  if (!owned) return null;
+  const { agent } = owned;
+  if (!['invited', 'waking', 'detached'].includes(agent.info.state)) return { ...agent.info };
+  const now = Date.now();
+  agent.info.state = 'active';
+  agent.info.activatedAt ??= now;
+  agent.info.finishedAt = null;
+  agent.info.sleptAt = null;
+  agent.info.detachedAt = null;
+  agent.info.revivable = false;
+  agent.info.lastSeenAt = now;
+  changed('critical');
+  return { ...agent.info };
+}
+
+/** Provider-owned counterpart to stageWorkerConversationFinish(), keyed by opaque runtime owner. */
+export function stageRuntimeWorkerFinish(runtimeOwnerId: string, result: string): StagedFinish | null {
+  const owned = runtimeWorker(runtimeOwnerId);
+  if (!owned || !canStageFinish(owned.agent)) return null;
+  return stageFinish(owned.agent, result);
+}
+
+/** Fails exactly the worker that owns a provider session, without exposing worker ids to runtimes. */
+export function failRuntimeWorker(runtimeOwnerId: string, reason: string): FinishResult | null {
+  const owned = runtimeWorker(runtimeOwnerId);
+  if (!owned) return null;
+  return failAgent(owned.agent.info.id, reason, undefined, {}, owned.run.runId);
+}
+
+/**
+ * A durable provider accepted the prime's next turn for this sleeping worker.
+ *
+ * Unlike a browser revival, app-server turn/start is already an acknowledgement that the input
+ * reached the provider, so the queued rows can be retired immediately rather than waiting for an
+ * MCP call that a non-browser runtime will never make.
+ */
+export function noteRuntimeWorkerRevived(runtimeOwnerId: string, messageIds: readonly string[]): boolean {
+  const owned = runtimeWorker(runtimeOwnerId);
+  if (!owned || owned.agent.info.runtimeKind !== 'codex-app-server' || owned.agent.info.state !== 'waking') return false;
+  const { agent } = owned;
+  const now = Date.now();
+  agent.info.state = 'active';
+  agent.info.activatedAt ??= now;
+  agent.info.finishedAt = null;
+  agent.info.sleptAt = null;
+  agent.info.detachedAt = null;
+  agent.info.result = null;
+  agent.info.revivable = false;
+  agent.info.lastSeenAt = now;
+  const offered = new Set(messageIds);
+  let delivered = 0;
+  for (const message of agent.queue) {
+    if (message.ackedAt !== null || !offered.has(message.id)) continue;
+    message.offeredAt = now;
+    message.offers += 1;
+    message.offeredOnFinish = false;
+    message.offeredViaRevival = true;
+    message.ackedAt = now;
+    delivered += 1;
+  }
+  agent.info.delivered += delivered;
+  recount(agent);
+  changed('critical');
+  return true;
+}
+
 /**
  * Ends a worker that never got off the ground, definitively.
  *
@@ -3137,8 +3245,10 @@ export function sleepWorker(id: string, reason: string, runId?: string): FinishR
 export interface WorkerRevival {
   primeConversationId: string | null;
   id: string;
-  conversationId: string;
+  conversationId: string | null;
   runId: string;
+  runtimeOwnerId: string;
+  runtimeKind: 'chatgpt-browser' | 'codex-app-server';
   text: string;
   messageIds: string[];
 }
@@ -3167,13 +3277,18 @@ export function onReviveRequest(handler: (revivals: WorkerRevival[]) => void): (
 export function pendingWorkerRevivals(): WorkerRevival[] {
   const out: WorkerRevival[] = [];
   for (const run of runs.values()) for (const agent of run.agents.values()) {
-    if (agent.info.state !== 'waking' || !agent.info.conversationId) continue;
+    if (agent.info.state !== 'waking') continue;
+    const runtimeKind = (agent.info.runtimeKind ?? 'chatgpt-browser') as 'chatgpt-browser' | 'codex-app-server';
+    if (runtimeKind === 'chatgpt-browser' && !agent.info.conversationId) continue;
+    if (!agent.info.runtimeOwnerId) continue;
     const plan = planRevivalText(agent);
     out.push({
       id: agent.info.id,
       conversationId: agent.info.conversationId,
       runId: run.runId,
       primeConversationId: run.primeConversationId,
+      runtimeOwnerId: agent.info.runtimeOwnerId,
+      runtimeKind,
       text: plan.text,
       messageIds: plan.messageIds
     });
@@ -3369,7 +3484,7 @@ export function stageQueuedWorkerRevivals(ids: readonly string[], runId?: string
       !wanted.has(agent.info.id) ||
       agent.info.state !== 'sleeping' ||
       !agent.info.revivable ||
-      !agent.info.conversationId ||
+      ((agent.info.runtimeKind ?? 'chatgpt-browser') === 'chatgpt-browser' && !agent.info.conversationId) ||
       ceilingCrossed(agent.info)
     ) {
       continue;
@@ -3427,7 +3542,7 @@ export function requestWorkerRevivals(ids: readonly string[], runId?: string): n
   const owed = pendingWorkerRevivals().filter((revival) => revival.runId === run.runId && wanted.has(revival.id));
   if (owed.length === 0) return 0;
   if (reviveRequest) reviveRequest(owed);
-  else logWarn('multi-agent: no browser extension is paired, so sleeping worker chats cannot be reopened');
+  else logWarn('multi-agent: no runtime delivery handler is registered, so sleeping workers cannot be resumed');
   return owed.length;
 }
 
@@ -5039,6 +5154,14 @@ function deserializeAgents(entries: readonly SerializedAgent[], savedAt: number)
     const agent: Agent = {
       info: {
         ...entry.info,
+        runtimeOwnerId:
+          typeof entry.info.runtimeOwnerId === 'string' && entry.info.runtimeOwnerId
+            ? entry.info.runtimeOwnerId
+            : randomUUID(),
+        runtimeKind:
+          entry.info.runtimeKind === 'codex-app-server' || entry.info.runtimeKind === 'chatgpt-browser'
+            ? entry.info.runtimeKind
+            : 'chatgpt-browser',
         model: isModelSlug(entry.info.model) ? entry.info.model : null,
         reasoningEffort: isReasoningEffort(entry.info.reasoningEffort) ? entry.info.reasoningEffort : null,
         sleptAt: typeof entry.info.sleptAt === 'number' ? entry.info.sleptAt : null,
