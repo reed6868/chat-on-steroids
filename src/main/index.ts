@@ -67,6 +67,10 @@ import { restoreRequestCorrelations } from './session/correlation.js';
 import { restoreBlockedChats } from './session/blocked-chats.js';
 import { restoreTrustedChats } from './session/trusted-chats.js';
 import { stopComputerHelper } from './computer/index.js';
+import { agentRuntimeRegistry, runtimeExecutionBroker } from './runtime/execution.js';
+import { chatgptPlanAuth } from './chatgpt-plan-auth.js';
+import { ChatgptPlanCodexRuntime } from './runtime/chatgpt-plan-codex-runtime.js';
+import type { RuntimeOwnershipSnapshot } from './runtime/agent-broker.js';
 import {
   GOAL_OBJECTIVES_STATE,
   GOAL_REPLIES_STATE,
@@ -108,6 +112,7 @@ import { showConnectionLossNotice } from './connection-loss-notice.js';
 /** Durable state file holding the multi-agent run. Hashes only, never credentials. */
 const SWARM_STATE = 'swarm';
 const RETIRED_WORKERS_STATE = 'retired-workers';
+const RUNTIME_OWNERSHIP_STATE = 'runtime-ownership';
 const WINDOW_BOUNDS_STATE = 'window-bounds';
 /** The tray and notice texts in the last interface language; a launch to the tray opens no window to send them. */
 const MAIN_TEXTS_STATE = 'main-texts';
@@ -118,6 +123,8 @@ let tray: Tray | null = null;
 let quitting = false;
 let shutdownStarted = false;
 let shutdownComplete = false;
+let chatgptPlanCodexRuntime: ChatgptPlanCodexRuntime | null = null;
+let dropChatgptPlanCodexRegistration: (() => void) | null = null;
 const usageWarmup = new AbortController();
 
 // One instance only: two copies would fight over the tunnel and the config file.
@@ -417,6 +424,10 @@ void app.whenReady().then(async () => {
   await loadConfig();
   await loadConnectorProof();
   await loadBrowserProof();
+  chatgptPlanCodexRuntime?.dispose();
+  dropChatgptPlanCodexRegistration?.();
+  chatgptPlanCodexRuntime = new ChatgptPlanCodexRuntime(chatgptPlanAuth, app.getVersion());
+  dropChatgptPlanCodexRegistration = agentRuntimeRegistry.register(chatgptPlanCodexRuntime);
   // Plugins ChatGPT already showed the refresh feature are created: Setup need not wait for a call.
   for (const surface of await enrolledPluginSurfaces()) notePluginInstalled(surface);
   await pluginManager.initialize(userData);
@@ -489,6 +500,12 @@ void app.whenReady().then(async () => {
   const savedSwarm = await readDurable<SwarmSnapshot>(SWARM_STATE);
   if (windowActivation.isDisabled()) return;
   restoreSwarm(savedSwarm);
+  const savedRuntimeOwnership = await readDurable<RuntimeOwnershipSnapshot>(RUNTIME_OWNERSHIP_STATE);
+  if (windowActivation.isDisabled()) return;
+  runtimeExecutionBroker.restore(savedRuntimeOwnership);
+  runtimeExecutionBroker.onChange(() =>
+    writeDurableSoon(RUNTIME_OWNERSHIP_STATE, runtimeExecutionBroker.snapshot())
+  );
   if (!getConfig().multiAgent.enabled) {
     // A feature toggle is a pause, not Clear swarm. Canonicalize any active incarnation left by
     // a crash into stopped prime-owned history before the bridge exists, then make that safer
@@ -641,6 +658,12 @@ app.on('will-quit', (event) => {
         name: 'process cleanup',
         budgetMs: 15_000,
         run: () => [unifiedExecManager.terminateAllProcesses(), stopComputerHelper(), shutdownPetOverlay(), pluginManager.close(),
+          Promise.resolve().then(() => {
+            chatgptPlanCodexRuntime?.dispose();
+            chatgptPlanCodexRuntime = null;
+            dropChatgptPlanCodexRegistration?.();
+            dropChatgptPlanCodexRegistration = null;
+          }),
           Promise.resolve().then(() => loadedCosBrowser()?.stop())]
       },
       // Phase 3: recorder work can enqueue both session projections and named durable state.
