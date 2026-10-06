@@ -107,6 +107,34 @@ describe('runtime-neutral agent broker', () => {
     expect(restored.binding('owner-a')?.executionId).toBe('exec-after-restart');
   });
 
+  it('reattaches provider event routing before a restored durable binding accepts follow-up work', async () => {
+    const firstRegistry = new AgentRuntimeRegistry();
+    const firstRuntime = new FakeRuntime('codex-app-server', 'durable');
+    firstRegistry.register(firstRuntime);
+    const firstBroker = new RuntimeExecutionBroker(firstRegistry);
+    await firstBroker.start(request());
+    const snapshot = firstBroker.snapshot();
+
+    const restoredRegistry = new AgentRuntimeRegistry();
+    const restoredRuntime = new FakeRuntime('codex-app-server', 'durable');
+    restoredRegistry.register(restoredRuntime);
+    const restoredBroker = new RuntimeExecutionBroker(restoredRegistry);
+    restoredBroker.restore(snapshot);
+    const seen = vi.fn();
+    restoredBroker.onEvent(seen);
+
+    await restoredBroker.send('owner-a', { text: 'Continue after restart' });
+    for (const listener of restoredRuntime.listeners) {
+      listener({ type: 'turn-started', sessionId: 'codex-app-server-session' });
+    }
+
+    expect(restoredRuntime.send).toHaveBeenCalledWith('codex-app-server-session', { text: 'Continue after restart' });
+    expect(seen).toHaveBeenCalledWith('owner-a', {
+      type: 'turn-started',
+      sessionId: 'codex-app-server-session'
+    });
+  });
+
   it('routes follow-up input and cancellation through session ownership rather than orchestration ids', async () => {
     const registry = new AgentRuntimeRegistry();
     const codex = new FakeRuntime('codex-app-server', 'durable');
