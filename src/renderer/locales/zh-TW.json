@@ -1984,5 +1984,9 @@
   "The tunnel disconnected unexpectedly. Open Chat On Steroids to check the connection.": "隧道連線意外中斷。請開啟 Chat On Steroids 檢查連線。",
   "Copy link": "複製連結",
   "Copy this chat's ChatGPT link": "複製此對話的 ChatGPT 連結",
-  "Link copied": "已複製連結"
+  "Link copied": "已複製連結",
+  "Default sub-agent runtime": "子代理預設執行階段",
+  "Browser stays the default. Codex app-server uses your signed-in ChatGPT Plan and keeps its provider thread durable across app restarts.": "瀏覽器仍為預設選項。Codex app-server 使用你已登入的 ChatGPT 方案，並在應用程式重新啟動後保留其供應商執行緒。",
+  "ChatGPT Plan for Codex": "Codex 的 ChatGPT 方案",
+  "Verify Codex": "驗證 Codex"
 }
