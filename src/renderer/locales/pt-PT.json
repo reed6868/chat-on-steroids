@@ -1956,5 +1956,9 @@
   "{0} sub-agents in this round": "{0} subagentes nesta ronda",
   "The Chat On Steroids browser is still running": "O navegador do Chat On Steroids continua em execução",
   "Your chats keep going. Choose Show browser in the tray icon’s menu to bring it back.": "Os seus chats continuam. Escolha “Mostrar navegador” no menu do ícone da área de notificação para o voltar a abrir.",
-  "Your chats keep going. Choose Show browser in the menu bar icon’s menu to bring it back.": "Os seus chats continuam. Escolha “Mostrar navegador” no menu do ícone da barra de menus para o voltar a abrir."
+  "Your chats keep going. Choose Show browser in the menu bar icon’s menu to bring it back.": "Os seus chats continuam. Escolha “Mostrar navegador” no menu do ícone da barra de menus para o voltar a abrir.",
+  "Default sub-agent runtime": "Ambiente de execução predefinido dos subagentes",
+  "Browser stays the default. Codex app-server uses your signed-in ChatGPT Plan and keeps its provider thread durable across app restarts.": "O navegador continua a ser a predefinição. O Codex app-server usa o seu plano ChatGPT com sessão iniciada e mantém a thread do fornecedor após reinícios da aplicação.",
+  "ChatGPT Plan for Codex": "Plano ChatGPT para Codex",
+  "Verify Codex": "Verificar Codex"
 }
