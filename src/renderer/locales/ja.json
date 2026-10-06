@@ -1984,5 +1984,9 @@
   "The tunnel disconnected unexpectedly. Open Chat On Steroids to check the connection.": "トンネル接続が予期せず切断されました。Chat On Steroids を開いて接続を確認してください。",
   "Copy link": "リンクをコピー",
   "Copy this chat's ChatGPT link": "このチャットのChatGPTリンクをコピー",
-  "Link copied": "リンクをコピーしました"
+  "Link copied": "リンクをコピーしました",
+  "Default sub-agent runtime": "サブエージェントの既定ランタイム",
+  "Browser stays the default. Codex app-server uses your signed-in ChatGPT Plan and keeps its provider thread durable across app restarts.": "ブラウザーが既定のままです。Codex app-server はサインイン済みの ChatGPT Plan を使用し、アプリを再起動してもプロバイダーのスレッドを維持します。",
+  "ChatGPT Plan for Codex": "Codex 用 ChatGPT Plan",
+  "Verify Codex": "Codex を検証"
 }
