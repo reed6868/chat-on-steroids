@@ -23,5 +23,12 @@ describe('runtime renderer controls', () => {
     expect(main).toContain('api.signOutChatgptPlan()');
     expect(main).toContain('api.verifyChatgptPlanCodex()');
     expect(main).toContain("next.chatgptPlan.signedIn");
+
+    for (const locale of ['de', 'es', 'fr', 'ja', 'ko', 'pt-BR', 'pt-PT', 'ru', 'tr', 'vi', 'zh-CN', 'zh-TW']) {
+      const catalog = JSON.parse(await fs.readFile(path.join(process.cwd(), 'src', 'renderer', 'locales', `${locale}.json`), 'utf8'));
+      for (const key of ['Default sub-agent runtime', 'Browser stays the default. Codex app-server uses your signed-in ChatGPT Plan and keeps its provider thread durable across app restarts.', 'ChatGPT Plan for Codex', 'Verify Codex']) {
+        expect(catalog[key], `${locale}: ${key}`).toBeTruthy();
+      }
+    }
   });
 });
