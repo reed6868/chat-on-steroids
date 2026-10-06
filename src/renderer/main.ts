@@ -65,7 +65,7 @@ async function runChatgptPlanAction(action: 'signIn' | 'signOut' | 'verify'): Pr
   try {
     if (action === 'verify') {
       const result = await run(api.verifyChatgptPlanCodex());
-      if (result) toast(t('Done'));
+      if (result) toast(t('Ready'));
       return;
     }
     const next = await run(action === 'signIn' ? api.signInChatgptPlan() : api.signOutChatgptPlan());
