@@ -2687,7 +2687,18 @@ describe('restart', () => {
 
     expect(swarmState().running).toBe(true);
     expect(snapshotSwarm()?.agents.map((entry) => entry.info.id)).toEqual(['prime', 'worker-1']);
-    expect(pendingWorkerSpawns()).toEqual([{ runId: staged.runId, primeConversationId: PRIME_CHAT, id: 'worker-1', model: null, reasoningEffort: null, task: 'inspect topology' }]);
+    expect(pendingWorkerSpawns()).toEqual([
+      expect.objectContaining({
+        runId: staged.runId,
+        primeConversationId: PRIME_CHAT,
+        id: 'worker-1',
+        runtimeOwnerId: expect.any(String),
+        runtimeKind: 'chatgpt-browser',
+        model: null,
+        reasoningEffort: null,
+        task: 'inspect topology'
+      })
+    ]);
     expect(ordinary.at(-1)?.agents.map((entry) => entry.info.id)).toEqual(['prime', 'worker-1']);
   });
 
