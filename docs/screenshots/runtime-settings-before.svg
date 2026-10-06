@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="420" viewBox="0 0 1000 420">
+<rect width="1000" height="420" fill="#111318"/><rect x="70" y="50" width="860" height="320" rx="18" fill="#1a1d24" stroke="#343944"/>
+<text x="110" y="100" fill="#f3f4f6" font-family="Arial,sans-serif" font-size="26" font-weight="700">Sub-agent defaults — before</text>
+<text x="110" y="142" fill="#f3f4f6" font-family="Arial,sans-serif" font-size="18" font-weight="700">Default sub-agent model</text>
+<text x="110" y="166" fill="#9ca3af" font-family="Arial,sans-serif" font-size="14">Confirmed in ChatGPT before a worker starts.</text>
+<rect x="610" y="126" width="260" height="48" rx="8" fill="#252a34" stroke="#454b57"/><text x="632" y="157" fill="#d1d5db" font-family="Arial,sans-serif" font-size="15">No observed choices</text>
+<line x1="110" y1="202" x2="870" y2="202" stroke="#343944"/>
+<text x="110" y="246" fill="#f3f4f6" font-family="Arial,sans-serif" font-size="18" font-weight="700">Default sub-agent reasoning</text>
+<text x="110" y="270" fill="#9ca3af" font-family="Arial,sans-serif" font-size="14">Selected independently from the model.</text>
+<rect x="610" y="230" width="260" height="48" rx="8" fill="#252a34" stroke="#454b57"/><text x="632" y="261" fill="#d1d5db" font-family="Arial,sans-serif" font-size="15">No observed choices</text>
+<text x="110" y="332" fill="#737b8c" font-family="Arial,sans-serif" font-size="13">Review capture derived from the main-branch Settings markup.</text>
+</svg>
