@@ -7,10 +7,11 @@ import { deliveryProof, listInputs, sessionInputPolicy } from './session/input.j
 import type { InputArgs, InputEntry } from './session/input.js';
 import { readSession } from './session/read-model.js';
 import { cancelDesktopInput, sendDesktopInput } from './session/start-input.js';
+import { CodexBrowserProviderError, handleCodexBrowserResponse } from './codex-browser-provider.js';
 
 /**
- * The action routes of the local control API: send a message to an existing chat, and cancel
- * one that has not been handed over.
+ * The action routes of the local control API: send/cancel through the durable outbox, plus one
+ * stateless Responses-compatible inference route backed by ChatGPT Web.
  *
  * There is no new send path. A message goes through `sendDesktopInput`, the same entry the
  * composer uses, and is cancelled through `cancelDesktopInput`; the outbox stays the only owner
@@ -51,12 +52,14 @@ const CANCEL_ROUTE = /^\/v1\/inputs\/([0-9a-f-]{36})\/cancel$/;
 
 /** Every path an action can arrive on, whatever the id, so one gate can refuse them all alike. */
 export function isActionPath(route: string): boolean {
-  return route === '/v1/inputs' || /^\/v1\/inputs\/[^/]+\/cancel$/.test(route);
+  return route === '/v1/inputs' || route === '/v1/responses' || /^\/v1\/inputs\/[^/]+\/cancel$/.test(route);
 }
 
 export interface ActionReply {
   status: number;
   body: unknown;
+  /** Raw wire payload instead of the control API's ordinary JSON envelope. */
+  contentType?: string;
 }
 
 const find = async (id: string): Promise<InputEntry | undefined> => (await listInputs()).find((row) => row.id === id);
@@ -192,10 +195,31 @@ async function cancel(id: string, rawBody: unknown): Promise<ActionReply> {
   return { status: 200, body: done };
 }
 
+async function infer(rawBody: unknown, signal: AbortSignal): Promise<ActionReply> {
+  // Recheck immediately before the browser side effect. The listener also checks, but the
+  // setting may change while the request body is arriving.
+  if (!actionsAllowed()) throw new RequestError(403, 'actions_disabled');
+  try {
+    const result = await handleCodexBrowserResponse(rawBody, signal);
+    return { status: result.status, body: result.body, contentType: result.contentType };
+  } catch (error) {
+    if (error instanceof CodexBrowserProviderError) {
+      throw new RequestError(error.status, error.code, error.message);
+    }
+    throw error;
+  }
+}
+
 /** Undefined when the method and path are not an action. */
-export async function serveAction(method: string, route: string, body: unknown): Promise<ActionReply | undefined> {
+export async function serveAction(
+  method: string,
+  route: string,
+  body: unknown,
+  signal: AbortSignal = new AbortController().signal
+): Promise<ActionReply | undefined> {
   if (method !== 'POST') return undefined;
   if (route === '/v1/inputs') return send(body);
+  if (route === '/v1/responses') return infer(body, signal);
   const match = CANCEL_ROUTE.exec(route);
   if (match) return cancel(match[1]!, body);
   return undefined;

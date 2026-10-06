@@ -1422,8 +1422,10 @@ export function claimBrowserInput(id: string, owner: string, conversationId: str
     if (!requiresAuthorization && completedTurnId && entry.sessionId && conversationId)
       await consumeGoalReplyForInputNow(conversationId, entry.sessionId, completedTurnId);
     logInfo(`input ${id}: browser claimed after ${Math.max(0, Date.now() - entry.createdAt)} ms`);
-    const withoutMention = await imageRequestWithoutMention(entry, session, companion);
-    if (withoutMention) logInfo(`input ${id}: asks for an image, so it goes out without the Core mention`);
+    const temporaryInference = entry.lifetime === 'temporary-planner';
+    const withoutMention = temporaryInference || await imageRequestWithoutMention(entry, session, companion);
+    if (temporaryInference) logInfo(`input ${id}: temporary browser inference goes out without the Core mention`);
+    else if (withoutMention) logInfo(`input ${id}: asks for an image, so it goes out without the Core mention`);
     return { ...combinedInput(claimed, companion), ...selection, text: claimed.deliveryText ?? claimed.text,
       ...(withoutMention ? { coreMention: false as const } : {}) };
   });

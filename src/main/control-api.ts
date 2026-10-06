@@ -59,6 +59,10 @@ const ACTION_RATE_LIMIT = 30;
 const MAX_BODY_BYTES = 512 * 1024;
 /** Actions waiting for their turn, counting the one running. Beyond that, a caller is told to wait. */
 const MAX_PENDING_ACTIONS = 4;
+/** Browser inference is independent work, not a durable outbox mutation; do not serialize it behind sends. */
+const MAX_INFERENCE_ACTIONS = 4;
+/** Match the app's existing Goal provider budget for one model decision. */
+const INFERENCE_DEADLINE_MS = 180_000;
 /** How long a caller gets to deliver the body it announced, and how long an action may take. */
 let bodyTimeoutMs = 5_000;
 /** An action that has not settled by then is answered as unknown; the outbox row is the truth. */
@@ -91,6 +95,7 @@ const recentActions: number[] = [];
 /** Actions change the outbox one at a time, in the order they arrived. */
 let actionChain: Promise<unknown> = Promise.resolve();
 let pendingActions = 0;
+let inFlightInferenceActions = 0;
 
 export function initControlApiPath(userDataDir: string): void {
   directory = path.join(userDataDir, DIRECTORY);
@@ -217,6 +222,15 @@ function reply(res: http.ServerResponse, status: number, body: unknown, headers:
   res.end(text);
 }
 
+function replyRaw(res: http.ServerResponse, status: number, body: string, contentType: string): void {
+  res.writeHead(status, {
+    'content-type': contentType,
+    'content-length': String(Buffer.byteLength(body)),
+    'cache-control': 'no-store'
+  });
+  res.end(body);
+}
+
 function safeEqual(a: string, b: string): boolean {
   const left = Buffer.from(a, 'utf8');
   const right = Buffer.from(b, 'utf8');
@@ -328,6 +342,41 @@ function runAction<T>(work: () => Promise<T>): Promise<T> {
   return Promise.race([run, deadline]).finally(() => clearTimeout(timer));
 }
 
+/**
+ * Browser inference is long-running but has no durable side effect to serialize with outbox
+ * actions. Bound its own concurrency and lifetime, and withdraw browser authority when the caller
+ * disconnects or the deadline expires.
+ */
+async function runInferenceAction<T>(
+  res: http.ServerResponse,
+  work: (signal: AbortSignal) => Promise<T>
+): Promise<T> {
+  if (inFlightInferenceActions >= MAX_INFERENCE_ACTIONS) {
+    throw new RequestError(503, 'browser_busy', 'too many browser inference requests are running; retry shortly');
+  }
+  inFlightInferenceActions += 1;
+  const controller = new AbortController();
+  let timedOut = false;
+  const onClose = () => {
+    if (!res.writableEnded) controller.abort();
+  };
+  res.once('close', onClose);
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, INFERENCE_DEADLINE_MS);
+  try {
+    return await work(controller.signal);
+  } catch (error) {
+    if (timedOut) throw new RequestError(504, 'inference_timeout', 'ChatGPT Web inference did not finish before the deadline');
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    res.off('close', onClose);
+    inFlightInferenceActions -= 1;
+  }
+}
+
 async function handleAction(req: http.IncomingMessage, res: http.ServerResponse, route: string, url: URL): Promise<void> {
   if (actionRateLimited()) return reply(res, 429, { error: 'rate_limited' }, { 'retry-after': '60' });
   if (url.search !== '') return reply(res, 400, { error: 'invalid_query', detail: 'actions take no query string' });
@@ -342,16 +391,25 @@ async function handleAction(req: http.IncomingMessage, res: http.ServerResponse,
     }
   }
   try {
-    const answer = await runAction(async () => {
+    const invoke = async (signal?: AbortSignal) => {
       // The switch can flip while a body is arriving or an earlier action runs.
       if (!actionsAllowed()) return null;
-      return serveAction(req.method ?? '', route, body);
-    });
+      return serveAction(req.method ?? '', route, body, signal);
+    };
+    const answer = route === '/v1/responses'
+      ? await runInferenceAction(res, (signal) => invoke(signal))
+      : await runAction(() => invoke());
     if (answer === null) return refuseActions(res);
     if (answer === undefined) return reply(res, 404, { error: 'not_found' });
+    if (answer.contentType && typeof answer.body === 'string') {
+      return replyRaw(res, answer.status, answer.body, answer.contentType);
+    }
     return reply(res, answer.status, answer.body);
   } catch (error) {
-    if (error instanceof RequestError) return reply(res, error.status, { error: error.code, ...(error.detail ? { detail: error.detail } : {}) });
+    if (error instanceof RequestError) {
+      if (res.destroyed) return;
+      return reply(res, error.status, { error: error.code, ...(error.detail ? { detail: error.detail } : {}) });
+    }
     throw error;
   }
 }

@@ -24,7 +24,7 @@ export const CONTROL_API_ROUTES = [
  * Routes that change something. They are served only while the user has also switched on
  * `controlApi.allowActions`, and are listed apart from `CONTROL_API_ROUTES` for that reason.
  */
-export const CONTROL_API_ACTION_ROUTES = ['POST /v1/inputs', 'POST /v1/inputs/{id}/cancel'] as const;
+export const CONTROL_API_ACTION_ROUTES = ['POST /v1/inputs', 'POST /v1/inputs/{id}/cancel', 'POST /v1/responses'] as const;
 
 /** Written to `userData/control-api/endpoint.json` while the listener is up. */
 export interface ControlApiEndpoint {
