@@ -70,8 +70,9 @@ describe('agent runtime boundary', () => {
     const bridge = readFileSync(new URL('../src/main/bridge.ts', import.meta.url), 'utf8');
 
     expect(bridge).toContain("from './runtime/browser-runtime.js'");
-    expect(bridge).toContain("from './runtime/registry.js'");
-    expect(bridge).toContain('agentRuntimes.require(CHATGPT_BROWSER_RUNTIME)');
+    expect(bridge).toContain("from './runtime/execution.js'");
+    expect(bridge).toContain('runtimeExecutionBroker.start({');
+    expect(bridge).not.toContain('agentRuntimes.require(CHATGPT_BROWSER_RUNTIME)');
     expect(bridge).toContain('const executionId = randomUUID()');
     expect(bridge).toContain('browserRuntimeBindings.set(executionId');
     expect(bridge).toContain('return command?.id ?? null');

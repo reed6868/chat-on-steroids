@@ -98,7 +98,7 @@ import {
 } from './goal.js';
 import { logInfo, logWarn } from './logger.js';
 import { BrowserAgentRuntime, CHATGPT_BROWSER_RUNTIME } from './runtime/browser-runtime.js';
-import { AgentRuntimeRegistry } from './runtime/registry.js';
+import { agentRuntimeRegistry, runtimeExecutionBroker } from './runtime/execution.js';
 import {
   closeConversation,
   liveConversations,
@@ -5066,6 +5066,7 @@ let bridgeError: string | null = null;
 const bridgeDrains = new Set<Promise<void>>();
 let dropSpawnRequestListener: (() => void) | null = null;
 let dropReviveRequestListener: (() => void) | null = null;
+let dropBrowserRuntimeRegistration: (() => void) | null = null;
 
 function runStaleSwarmSweep(): Promise<boolean> {
   if (staleSweepInFlight) return staleSweepInFlight;
@@ -5276,9 +5277,9 @@ async function startBridgeOnce(epoch: number, prepared?: PreparedBridge): Promis
   dropSwarmChangeListener = onSwarmChange(retireInactiveWorkerRecovery);
   retireInactiveWorkerRecovery();
   dropSpawnRequestListener?.();
-  const agentRuntimes = new AgentRuntimeRegistry();
   const browserRuntimeBindings = new Map<string, { runId: string; agentId: string }>();
-  agentRuntimes.register(new BrowserAgentRuntime((request) => {
+  dropBrowserRuntimeRegistration?.();
+  dropBrowserRuntimeRegistration = agentRuntimeRegistry.register(new BrowserAgentRuntime((request) => {
     const binding = browserRuntimeBindings.get(request.executionId);
     if (!binding) return null;
     const command = queueWorkerBootstrap(
@@ -5291,15 +5292,30 @@ async function startBridgeOnce(epoch: number, prepared?: PreparedBridge): Promis
     return command?.id ?? null;
   }));
   dropSpawnRequestListener = onSpawnRequest((workers) => {
-    const browserRuntime = agentRuntimes.require(CHATGPT_BROWSER_RUNTIME);
     for (const worker of workers) {
       const executionId = randomUUID();
-      browserRuntimeBindings.set(executionId, { runId: worker.runId, agentId: worker.id });
-      void browserRuntime.start({
+      if (worker.runtimeKind === CHATGPT_BROWSER_RUNTIME) {
+        browserRuntimeBindings.set(executionId, { runId: worker.runId, agentId: worker.id });
+      }
+      void runtimeExecutionBroker.start({
+        ownerId: worker.runtimeOwnerId,
+        runtimeKind: worker.runtimeKind,
         executionId,
         input: worker.task,
         model: worker.model,
         reasoningEffort: worker.reasoningEffort
+      }).then(binding => {
+        if (!binding) {
+          failAgent(worker.id, `${worker.runtimeKind} runtime refused to start`, undefined, {}, worker.runId);
+        }
+      }).catch(error => {
+        failAgent(
+          worker.id,
+          `${worker.runtimeKind} runtime failed to start: ${error instanceof Error ? error.message : String(error)}`,
+          undefined,
+          {},
+          worker.runId
+        );
       }).finally(() => browserRuntimeBindings.delete(executionId));
     }
   });
@@ -5417,6 +5433,8 @@ export async function stopBridge(): Promise<void> {
     dropSwarmChangeListener = null;
     dropSpawnRequestListener?.();
     dropSpawnRequestListener = null;
+    dropBrowserRuntimeRegistration?.();
+    dropBrowserRuntimeRegistration = null;
     dropReviveRequestListener?.();
     dropReviveRequestListener = null;
     if (staleSwarmTimer) clearInterval(staleSwarmTimer);

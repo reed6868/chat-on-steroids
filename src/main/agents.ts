@@ -538,6 +538,8 @@ export interface WorkerSpawn {
   runId: string;
   primeConversationId: string | null;
   id: string;
+  runtimeOwnerId: string;
+  runtimeKind: 'chatgpt-browser' | 'codex-app-server';
   task: string;
   /** Requested ChatGPT model slug, or null for the account default. */
   model: string | null;
@@ -552,7 +554,16 @@ export function pendingWorkerSpawns(): WorkerSpawn[] {
       (agent) =>
         agent.info.role === 'worker' && agent.info.state === 'invited' && !unpublishedAgents.has(agent)
     )
-    .map((agent) => ({ runId: run.runId, primeConversationId: run.primeConversationId, id: agent.info.id, task: agent.info.task, model: agent.info.model, reasoningEffort: agent.info.reasoningEffort })));
+    .map((agent) => ({
+      runId: run.runId,
+      primeConversationId: run.primeConversationId,
+      id: agent.info.id,
+      runtimeOwnerId: agent.info.runtimeOwnerId!,
+      runtimeKind: (agent.info.runtimeKind ?? 'chatgpt-browser') as 'chatgpt-browser' | 'codex-app-server',
+      task: agent.info.task,
+      model: agent.info.model,
+      reasoningEffort: agent.info.reasoningEffort
+    })));
 }
 
 /**
@@ -1291,11 +1302,20 @@ Your task:
 ${task}`;
 }
 
-function makeWorker(id: string, label: string, task: string, model: string | null, reasoningEffort: ReasoningEffort | null): Agent {
+function makeWorker(
+  id: string,
+  label: string,
+  task: string,
+  model: string | null,
+  reasoningEffort: ReasoningEffort | null,
+  runtimeKind: 'chatgpt-browser' | 'codex-app-server'
+): Agent {
   return {
     info: {
       id,
       role: 'worker',
+      runtimeOwnerId: randomUUID(),
+      runtimeKind,
       label,
       task,
       model,
@@ -1787,7 +1807,16 @@ export function requestWorkerBootstraps(ids: readonly string[], runId?: string):
         !unpublishedAgents.has(agent) &&
         wanted.has(agent.info.id)
     )
-    .map((agent) => ({ runId: run.runId, primeConversationId: run.primeConversationId, id: agent.info.id, task: agent.info.task, model: agent.info.model, reasoningEffort: agent.info.reasoningEffort }));
+    .map((agent) => ({
+      runId: run.runId,
+      primeConversationId: run.primeConversationId,
+      id: agent.info.id,
+      runtimeOwnerId: agent.info.runtimeOwnerId!,
+      runtimeKind: (agent.info.runtimeKind ?? 'chatgpt-browser') as 'chatgpt-browser' | 'codex-app-server',
+      task: agent.info.task,
+      model: agent.info.model,
+      reasoningEffort: agent.info.reasoningEffort
+    }));
   if (owed.length === 0) return 0;
   if (spawnRequest) spawnRequest(owed);
   else logWarn('multi-agent: no browser extension is paired, so worker chats cannot be opened automatically');
@@ -1958,7 +1987,8 @@ export function spawn(input: SpawnInput, options: SpawnOptions = {}): SpawnResul
   const createdAgents: Agent[] = [];
   for (const [index, worker] of planned.entries()) {
     const id = ids[index] as string;
-    const agent = makeWorker(id, worker.label || id, worker.task, worker.model, worker.reasoningEffort);
+    const runtimeKind = getConfig().multiAgent.defaultRuntime ?? 'chatgpt-browser';
+    const agent = makeWorker(id, worker.label || id, worker.task, worker.model, worker.reasoningEffort, runtimeKind);
     activeRun.agents.set(id, agent);
     stampOwner(activeRun);
     // A worker starts in the folder the prime was working in, so its first call can use the
@@ -5034,6 +5064,14 @@ function deserializeAgents(entries: readonly SerializedAgent[], savedAt: number)
     const agent: Agent = {
       info: {
         ...entry.info,
+        runtimeOwnerId:
+          typeof entry.info.runtimeOwnerId === 'string' && entry.info.runtimeOwnerId
+            ? entry.info.runtimeOwnerId
+            : randomUUID(),
+        runtimeKind:
+          entry.info.runtimeKind === 'codex-app-server' || entry.info.runtimeKind === 'chatgpt-browser'
+            ? entry.info.runtimeKind
+            : 'chatgpt-browser',
         model: isModelSlug(entry.info.model) ? entry.info.model : null,
         reasoningEffort: isReasoningEffort(entry.info.reasoningEffort) ? entry.info.reasoningEffort : null,
         sleptAt: typeof entry.info.sleptAt === 'number' ? entry.info.sleptAt : null,

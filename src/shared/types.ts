@@ -318,6 +318,8 @@ export interface GoalSettings {
  * by accident: several ChatGPT tabs driving the same filesystem is a real risk.
  */
 export interface MultiAgentSettings {
+  /** Default execution provider for newly created agents. Existing agents keep their saved choice. */
+  defaultRuntime?: 'chatgpt-browser' | 'codex-app-server';
   defaultModel?: string;
   defaultReasoning?: ReasoningEffort | '';
   enabled: boolean;

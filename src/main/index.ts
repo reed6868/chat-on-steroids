@@ -58,6 +58,8 @@ import { restoreRequestCorrelations } from './session/correlation.js';
 import { restoreBlockedChats } from './session/blocked-chats.js';
 import { restoreTrustedChats } from './session/trusted-chats.js';
 import { stopComputerHelper } from './computer/index.js';
+import { runtimeExecutionBroker } from './runtime/execution.js';
+import type { RuntimeOwnershipSnapshot } from './runtime/agent-broker.js';
 import {
   GOAL_OBJECTIVES_STATE,
   GOAL_REPLIES_STATE,
@@ -98,6 +100,7 @@ import { editContextMenuTemplate } from './edit-context-menu.js';
 /** Durable state file holding the multi-agent run. Hashes only, never credentials. */
 const SWARM_STATE = 'swarm';
 const RETIRED_WORKERS_STATE = 'retired-workers';
+const RUNTIME_OWNERSHIP_STATE = 'runtime-ownership';
 const WINDOW_BOUNDS_STATE = 'window-bounds';
 /** The tray and notice texts in the last interface language; a launch to the tray opens no window to send them. */
 const MAIN_TEXTS_STATE = 'main-texts';
@@ -469,6 +472,12 @@ void app.whenReady().then(async () => {
   const savedSwarm = await readDurable<SwarmSnapshot>(SWARM_STATE);
   if (windowActivation.isDisabled()) return;
   restoreSwarm(savedSwarm);
+  const savedRuntimeOwnership = await readDurable<RuntimeOwnershipSnapshot>(RUNTIME_OWNERSHIP_STATE);
+  if (windowActivation.isDisabled()) return;
+  runtimeExecutionBroker.restore(savedRuntimeOwnership);
+  runtimeExecutionBroker.onChange(() =>
+    writeDurableSoon(RUNTIME_OWNERSHIP_STATE, runtimeExecutionBroker.snapshot())
+  );
   if (!getConfig().multiAgent.enabled) {
     // A feature toggle is a pause, not Clear swarm. Canonicalize any active incarnation left by
     // a crash into stopped prime-owned history before the bridge exists, then make that safer

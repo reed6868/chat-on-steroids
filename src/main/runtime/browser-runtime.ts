@@ -13,6 +13,7 @@ export type BrowserRuntimeStart = (request: RuntimeStartOptions) => string | nul
 
 export class BrowserAgentRuntime implements AgentRuntime {
   readonly kind = CHATGPT_BROWSER_RUNTIME;
+  readonly sessionPersistence = 'ephemeral' as const;
   private readonly listeners = new Set<RuntimeEventListener>();
 
   constructor(private readonly startTransport: BrowserRuntimeStart) {}

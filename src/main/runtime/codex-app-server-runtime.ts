@@ -59,6 +59,7 @@ function codexEffort(effort: RuntimeStartOptions['reasoningEffort']): string | n
 
 export class CodexAppServerRuntime implements AgentRuntime {
   readonly kind = CODEX_APP_SERVER_RUNTIME;
+  readonly sessionPersistence = 'durable' as const;
   private readonly listeners = new Set<RuntimeEventListener>();
   private readonly sessions = new Map<string, SessionState>();
   private readonly activeTurns = new Map<string, string>();
