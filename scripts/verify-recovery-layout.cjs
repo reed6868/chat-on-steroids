@@ -44,9 +44,9 @@ app.whenReady().then(async () => {
     return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   })()\`);
   await settingsWin.webContents.executeJavaScript(\`runtimeRows.forEach(row => row.hidden = true); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))\`);
-  fs.writeFileSync(path.join(settingsOutput, 'before.png'), (await settingsWin.webContents.capturePage()).toPNG());
+  await captureOffscreenFrame(settingsWin, path.join(settingsOutput, 'before.png'));
   await settingsWin.webContents.executeJavaScript(\`runtimeRows.forEach(row => row.hidden = false); new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))\`);
-  fs.writeFileSync(path.join(settingsOutput, 'after.png'), (await settingsWin.webContents.capturePage()).toPNG());
+  await captureOffscreenFrame(settingsWin, path.join(settingsOutput, 'after.png'));
   settingsWin.destroy();
   throw new Error('intentional PR screenshot capture');
 
