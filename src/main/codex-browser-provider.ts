@@ -21,11 +21,13 @@ export interface CodexBrowserProviderReply {
   body: string;
 }
 
-type ToolKind = 'function' | 'custom';
+type ToolKind = 'function' | 'custom' | 'tool_search';
 interface ToolIdentity {
   name: string;
   namespace?: string;
   kind: ToolKind;
+  /** Deferred tools become executable only after Codex returns them in tool_search_output. */
+  deferred: boolean;
 }
 
 const requestSchema = z.object({
@@ -79,7 +81,7 @@ function toolKey(tool: Pick<ToolIdentity, 'name' | 'namespace'>): string {
   return `${tool.namespace ?? ''}\0${tool.name}`;
 }
 
-function collectTools(tools: unknown[]): ToolIdentity[] {
+function collectTools(tools: unknown[], discovered = false): ToolIdentity[] {
   const result: ToolIdentity[] = [];
   const visit = (value: unknown, namespace?: string): void => {
     const tool = record(value);
@@ -93,12 +95,25 @@ function collectTools(tools: unknown[]): ToolIdentity[] {
       for (const child of tool.tools) visit(child, tool.name);
       return;
     }
+    if (tool.type === 'tool_search') {
+      if (namespace || tool.execution !== 'client') {
+        throw providerError(400, 'unsupported_request', 'Only client-side Codex tool_search is supported.');
+      }
+      result.push({ name: 'tool_search', kind: 'tool_search', deferred: false });
+      return;
+    }
     if ((tool.type !== 'function' && tool.type !== 'custom') || typeof tool.name !== 'string' || !tool.name) {
       throw providerError(400, 'unsupported_request', `Responses tool type ${String(tool.type)} is not supported by the browser provider.`);
     }
-    result.push({ name: tool.name, ...(namespace ? { namespace } : {}), kind: tool.type });
+    result.push({
+      name: tool.name,
+      ...(namespace ? { namespace } : {}),
+      kind: tool.type,
+      deferred: !discovered && tool.defer_loading === true
+    });
   };
   for (const tool of tools) visit(tool);
+  if (result.length > 256) throw providerError(400, 'unsupported_request', 'Too many tool definitions.');
 
   const seen = new Set<string>();
   for (const tool of result) {
@@ -107,6 +122,32 @@ function collectTools(tools: unknown[]): ToolIdentity[] {
     seen.add(key);
   }
   return result;
+}
+
+function discoveredTools(input: unknown[]): ToolIdentity[] {
+  const discovered: ToolIdentity[] = [];
+  for (const value of input) {
+    const item = record(value);
+    if (item?.type !== 'tool_search_output' || item.execution !== 'client' || item.status !== 'completed' || !Array.isArray(item.tools)) continue;
+    discovered.push(...collectTools(item.tools, true));
+    if (discovered.length > 256) throw providerError(400, 'unsupported_request', 'Too many discovered tool definitions.');
+  }
+  return discovered;
+}
+
+function mergeTools(advertised: ToolIdentity[], discovered: ToolIdentity[]): ToolIdentity[] {
+  const merged = new Map<string, ToolIdentity>();
+  for (const tool of advertised) merged.set(toolKey(tool), tool);
+  for (const tool of discovered) {
+    const key = toolKey(tool);
+    const existing = merged.get(key);
+    if (existing && existing.kind !== tool.kind) {
+      throw providerError(400, 'unsupported_request', 'A discovered tool changed its advertised kind.');
+    }
+    // A tool returned by Codex's own tool_search_output is now executable for this request.
+    merged.set(key, { ...tool, deferred: false });
+  }
+  return [...merged.values()];
 }
 
 function parseRequest(raw: unknown) {
@@ -118,9 +159,9 @@ function parseRequest(raw: unknown) {
   if (!parsed.success) {
     throw providerError(400, 'invalid_request', parsed.error.issues[0]?.message ?? 'Invalid Responses request.');
   }
-  const tools = collectTools(parsed.data.tools);
-  if (parsed.data.tool_choice === 'required' && tools.length === 0) {
-    throw providerError(400, 'unsupported_request', 'tool_choice=required needs at least one supported tool.');
+  const tools = mergeTools(collectTools(parsed.data.tools), discoveredTools(parsed.data.input));
+  if (parsed.data.tool_choice === 'required' && !tools.some((tool) => !tool.deferred)) {
+    throw providerError(400, 'unsupported_request', 'tool_choice=required needs at least one executable tool.');
   }
   return { request: parsed.data, tools };
 }
@@ -138,7 +179,7 @@ function buildPrompt(request: z.infer<typeof requestSchema>, tools: ToolIdentity
     tool_choice: request.tool_choice,
     parallel_tool_calls: request.parallel_tool_calls
   };
-  const available = tools.map((tool) => ({
+  const available = tools.filter((tool) => !tool.deferred).map((tool) => ({
     name: tool.name,
     ...(tool.namespace ? { namespace: tool.namespace } : {}),
     kind: tool.kind
@@ -150,7 +191,8 @@ function buildPrompt(request: z.infer<typeof requestSchema>, tools: ToolIdentity
     'Return exactly one JSON object and no Markdown fence or surrounding prose.',
     'For a final assistant answer return: {"type":"message","text":"..."}',
     'For Codex tool execution return: {"type":"tool_calls","calls":[...]}',
-    'A function call is {"name":"TOOL","arguments":{...}}. A custom/freeform call is {"name":"TOOL","input":"..."}. Include "namespace" only when the advertised tool is namespaced.',
+    'A function or tool_search call is {"name":"TOOL","arguments":{...}}. A custom/freeform call is {"name":"TOOL","input":"..."}. Include "namespace" only when the advertised tool is namespaced.',
+    'A tool marked defer_loading is not executable until Codex has returned it in a completed tool_search_output; only tools in Advertised executable tools may be called.',
     `Advertised executable tools: ${JSON.stringify(available)}`,
     '<codex_responses_request>',
     JSON.stringify(contract),
@@ -200,10 +242,10 @@ function validateModelOutput(
   const catalog = new Map(tools.map((tool) => [toolKey(tool), tool] as const));
   for (const call of output.calls) {
     const tool = catalog.get(toolKey(call));
-    if (!tool) throw providerError(502, 'invalid_model_output', 'ChatGPT Web requested a tool that Codex did not advertise.');
-    if (tool.kind === 'function') {
-      if (!call.arguments || call.input !== undefined) {
-        throw providerError(502, 'invalid_model_output', 'A function tool call must contain JSON arguments only.');
+    if (!tool || tool.deferred) throw providerError(502, 'invalid_model_output', 'ChatGPT Web requested a tool that Codex did not make executable.');
+    if (tool.kind === 'function' || tool.kind === 'tool_search') {
+      if (!call.arguments || call.input !== undefined || (tool.kind === 'tool_search' && call.namespace !== undefined)) {
+        throw providerError(502, 'invalid_model_output', 'A function or tool_search call must contain JSON arguments only.');
       }
     } else if (call.input === undefined || call.arguments !== undefined) {
       throw providerError(502, 'invalid_model_output', 'A custom tool call must contain freeform input only.');
@@ -232,7 +274,7 @@ function completed(responseId: string): Record<string, unknown> {
   };
 }
 
-function responseBody(output: z.infer<typeof modelOutputSchema>): string {
+function responseBody(output: z.infer<typeof modelOutputSchema>, tools: ToolIdentity[]): string {
   const responseId = `resp_${randomUUID()}`;
   let body = event('response.created', { response: { id: responseId } });
   if (output.type === 'message') {
@@ -245,22 +287,32 @@ function responseBody(output: z.infer<typeof modelOutputSchema>): string {
       }
     });
   } else {
+    const catalog = new Map(tools.map((tool) => [toolKey(tool), tool] as const));
     for (const call of output.calls) {
-      const item = call.arguments
+      const tool = catalog.get(toolKey(call))!;
+      const callId = `call_${randomUUID()}`;
+      const item = tool.kind === 'tool_search'
         ? {
-            type: 'function_call',
-            call_id: `call_${randomUUID()}`,
-            ...(call.namespace ? { namespace: call.namespace } : {}),
-            name: call.name,
-            arguments: JSON.stringify(call.arguments)
+            type: 'tool_search_call',
+            call_id: callId,
+            execution: 'client',
+            arguments: call.arguments!
           }
-        : {
-            type: 'custom_tool_call',
-            call_id: `call_${randomUUID()}`,
-            ...(call.namespace ? { namespace: call.namespace } : {}),
-            name: call.name,
-            input: call.input!
-          };
+        : tool.kind === 'function'
+          ? {
+              type: 'function_call',
+              call_id: callId,
+              ...(call.namespace ? { namespace: call.namespace } : {}),
+              name: call.name,
+              arguments: JSON.stringify(call.arguments)
+            }
+          : {
+              type: 'custom_tool_call',
+              call_id: callId,
+              ...(call.namespace ? { namespace: call.namespace } : {}),
+              name: call.name,
+              input: call.input!
+            };
       body += event('response.output_item.done', { item });
     }
   }
@@ -298,6 +350,6 @@ export async function handleCodexBrowserResponse(
   return {
     status: 200,
     contentType: 'text/event-stream; charset=utf-8',
-    body: responseBody(output)
+    body: responseBody(output, tools)
   };
 }
