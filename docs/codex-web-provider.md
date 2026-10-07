@@ -25,9 +25,13 @@ Chat, so there is no durable Codex-thread ↔ ChatGPT-conversation mapping.
 
 ## Prerequisites
 
-In COS, enable the Local Control API and its **Allow actions** switch. The adapter reads the
-per-launch COS endpoint and token from the control API directory on every request, so a COS
-restart does not require copying its token into Codex.
+In COS, enable the Local Control API, its **Allow actions** switch, and **Trust only selected
+chats** (strict chat allowlisting). Browser inference fails closed unless strict allowlisting is
+enabled: the Temporary Chat is an inference surface only, and any attempt by it to call COS tools
+must be refused by the existing kernel before Codex can remain the sole executor.
+
+The adapter reads the per-launch COS endpoint and token from the control API directory on every
+request, so a COS restart does not require copying its token into Codex.
 
 Set three environment variables before starting the adapter:
 
@@ -82,7 +86,10 @@ dropping history; Codex should compact locally.
 The provider binds loopback only, requires its own Bearer token, rejects browser-originated
 requests, and forwards inference only to COS's authenticated loopback control API. Browser output
 must be one nonce-bound JSON object. A tool call is accepted only if that exact tool was declared
-by Codex in the current request. Tool execution remains in Codex.
+by Codex in the current request. Current Responses Lite models such as `gpt-5.6-sol` publish their
+live tool set in the first developer `additional_tools` input item instead of the top-level
+`tools` field; the adapter recognizes that current prefix but never treats older tool declarations
+later in history as authority. Tool execution remains in Codex.
 
 There is no API fallback. If COS is unavailable, ChatGPT Web is busy, the browser send is
 ambiguous, the output envelope is invalid, or the request exceeds the browser bound, the Codex
