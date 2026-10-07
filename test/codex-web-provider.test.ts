@@ -170,3 +170,81 @@ it('round-trips Codex through only the authenticated COS browser inference bound
     await removeTempDir(dir);
   }
 });
+
+
+it('uses only the current Responses Lite additional_tools prefix as tool authority', async () => {
+  const dir = await makeTempDir('clf-codex-web-provider-lite-');
+  const liteRequest = {
+    model: 'gpt-5.6-sol',
+    stream: true,
+    input: [
+      {
+        type: 'additional_tools',
+        role: 'developer',
+        tools: [{
+          type: 'namespace',
+          name: 'functions',
+          description: '',
+          tools: [{
+            type: 'custom',
+            name: 'exec',
+            description: 'Run JavaScript code',
+            format: { type: 'grammar', syntax: 'lark', definition: 'start: /.+/' }
+          }]
+        }]
+      },
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Inspect the repo.' }] }
+    ],
+    tool_choice: 'auto',
+    parallel_tool_calls: false,
+    reasoning: { effort: 'high' }
+  };
+  let mode: 'current' | 'stale' = 'current';
+  const cos = http.createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => {
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      const nonce = /The object MUST contain "nonce":"([^"]+)"/.exec(body.prompt)?.[1];
+      const answer = mode === 'current'
+        ? { nonce, type: 'tool_calls', calls: [{ kind: 'custom', namespace: 'functions', name: 'exec', input: 'await tools.exec({cmd:"pwd"})' }] }
+        : { nonce, type: 'tool_calls', calls: [{ kind: 'custom', namespace: 'functions', name: 'old_exec', input: 'pwd' }] };
+      const payload = JSON.stringify({ text: JSON.stringify(answer) });
+      res.writeHead(200, { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(payload)) });
+      res.end(payload);
+    });
+  });
+  const cosPort = await listen(cos);
+
+  try {
+    await fs.writeFile(path.join(dir, 'endpoint.json'), JSON.stringify({ port: cosPort }));
+    await fs.writeFile(path.join(dir, 'token'), 'cos-control-secret\n');
+
+    await expect(inferViaCos(liteRequest, { controlDir: dir })).resolves.toEqual({
+      type: 'tool_calls',
+      calls: [{ kind: 'custom', namespace: 'functions', name: 'exec', input: 'await tools.exec({cmd:"pwd"})' }]
+    });
+
+    mode = 'stale';
+    const staleOnly = {
+      ...liteRequest,
+      input: [
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'No current tools.' }] },
+        {
+          type: 'additional_tools',
+          role: 'developer',
+          tools: [{
+            type: 'namespace',
+            name: 'functions',
+            description: '',
+            tools: [{ type: 'custom', name: 'old_exec', description: 'Historical tool', format: { type: 'text' } }]
+          }]
+        }
+      ]
+    };
+    await expect(inferViaCos(staleOnly, { controlDir: dir })).rejects.toThrow(/not declared/i);
+  } finally {
+    await new Promise<void>(resolve => cos.close(() => resolve()));
+    await removeTempDir(dir);
+  }
+});
