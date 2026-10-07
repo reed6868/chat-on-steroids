@@ -2,9 +2,11 @@ import { z } from 'zod';
 import { REASONING_EFFORTS, type ReasoningEffort } from '../shared/session.js';
 import { MAX_CHATGPT_MESSAGE_CHARS } from '../shared/user-prompt.js';
 import { requestBrowserDecision } from './session/input.js';
+import { strictChatAllowlistEnabled } from './session/conversation-access.js';
 
 export type BrowserInferenceErrorCode =
   | 'invalid_request'
+  | 'browser_tools_not_fenced'
   | 'browser_busy'
   | 'browser_cancelled'
   | 'browser_delivery_unconfirmed'
@@ -53,6 +55,15 @@ function normalize(error: unknown): BrowserInferenceError {
 export async function runBrowserInference(raw: unknown, signal: AbortSignal): Promise<BrowserInferenceResult> {
   const parsed = requestSchema.safeParse(raw);
   if (!parsed.success) throw new BrowserInferenceError('invalid_request', 'browser inference request is invalid');
+  // Browser inference is intentionally model-only: Codex must remain the sole executor.
+  // A Temporary Chat has no durable COS chat owner, so strict chat allowlisting is the existing
+  // kernel fence that guarantees any direct COS tool attempt is refused instead of running.
+  if (!strictChatAllowlistEnabled()) {
+    throw new BrowserInferenceError(
+      'browser_tools_not_fenced',
+      'Enable strict chat allowlisting before using browser inference'
+    );
+  }
 
   try {
     const text = await requestBrowserDecision(parsed.data.prompt, signal, {
