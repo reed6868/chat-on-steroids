@@ -25,7 +25,7 @@ vi.mock('../src/main/config.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/main/config.js')>();
   return { ...actual, getConfig: () => ({ ...actual.getConfig(), controlApi: { enabled: gate.enabled, allowActions: gate.actions } }) };
 });
-vi.mock('../src/main/session/input.js', () => ({ requestBrowserDecision: browser.request }));
+vi.mock('../src/main/session/input.js', async (importOriginal) => {\n  const actual = await importOriginal<typeof import('../src/main/session/input.js')>();\n  return { ...actual, requestBrowserDecision: browser.request };\n});
 vi.mock('../src/main/connection.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/main/connection.js')>();
   return { ...actual, getStatus: () => ({ ...actual.getStatus(), state: 'connected' as const }) };
