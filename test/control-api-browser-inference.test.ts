@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { makeTempDir, removeTempDir } from './helpers.js';
 
-const gate = vi.hoisted(() => ({ actions: true, enabled: true }));
+const gate = vi.hoisted(() => ({ actions: true, enabled: true, strict: true }));
 const browser = vi.hoisted(() => ({ request: vi.fn() }));
 
 vi.mock('electron', () => ({
@@ -23,7 +23,14 @@ vi.mock('electron', () => ({
 
 vi.mock('../src/main/config.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/main/config.js')>();
-  return { ...actual, getConfig: () => ({ ...actual.getConfig(), controlApi: { enabled: gate.enabled, allowActions: gate.actions } }) };
+  return { ...actual, getConfig: () => {
+    const config = actual.getConfig();
+    return {
+      ...config,
+      controlApi: { enabled: gate.enabled, allowActions: gate.actions },
+      multiAgent: { ...config.multiAgent, strictChatAllowlist: gate.strict }
+    };
+  } };
 });
 vi.mock('../src/main/session/input.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/main/session/input.js')>();
@@ -88,6 +95,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   gate.enabled = true;
   gate.actions = true;
+  gate.strict = true;
   browser.request.mockReset();
   controlApi.setBrowserInferenceDeadlineForTests();
   await restart();
@@ -153,4 +161,12 @@ it('aborts a bounded inference instead of leaving an ownerless browser turn runn
   const response = await call('/v1/browser/infer', JSON.stringify({ prompt: 'wait forever' }));
   expect(response).toEqual({ status: 504, body: { error: 'browser_timeout' } });
   expect(browser.request).toHaveBeenCalledTimes(1);
+});
+
+
+it('fails closed when the temporary browser model is not fenced from COS tools', async () => {
+  gate.strict = false;
+  const response = await call('/v1/browser/infer', JSON.stringify({ prompt: 'must stay inference-only' }));
+  expect(response).toEqual({ status: 409, body: { error: 'browser_tools_not_fenced' } });
+  expect(browser.request).not.toHaveBeenCalled();
 });
