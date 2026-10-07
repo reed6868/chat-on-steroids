@@ -14,6 +14,7 @@ import {
 import type { PluginSnapshot } from '../shared/plugins.js';
 import type { BridgeStatus, ConnectionStatus, UpdateStatus } from '../shared/types.js';
 import { bridgeStatus } from './bridge.js';
+import { BrowserInferenceError, runBrowserInference } from './browser-inference.js';
 import { actionsAllowed, isActionPath, serveAction } from './control-actions.js';
 import { RequestError, serveRead } from './control-reads.js';
 import { getStatus } from './connection.js';
@@ -63,6 +64,13 @@ const MAX_PENDING_ACTIONS = 4;
 let bodyTimeoutMs = 5_000;
 /** An action that has not settled by then is answered as unknown; the outbox row is the truth. */
 let actionDeadlineMs = 20_000;
+/** Browser inference is interactive and may legitimately outlive ordinary control actions. */
+let browserInferenceDeadlineMs = 5 * 60_000;
+const BROWSER_INFERENCE_ROUTE = '/v1/browser/infer';
+
+export function setBrowserInferenceDeadlineForTests(ms?: number): void {
+  browserInferenceDeadlineMs = ms ?? 5 * 60_000;
+}
 
 export function setActionLimitsForTests(limits: { bodyTimeoutMs?: number; deadlineMs?: number }): void {
   bodyTimeoutMs = limits.bodyTimeoutMs ?? 5_000;
@@ -356,6 +364,54 @@ async function handleAction(req: http.IncomingMessage, res: http.ServerResponse,
   }
 }
 
+async function handleBrowserInference(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+  if (actionRateLimited()) return reply(res, 429, { error: 'rate_limited' }, { 'retry-after': '60' });
+  if (url.search !== '') return reply(res, 400, { error: 'invalid_query', detail: 'actions take no query string' });
+  const raw = await readBody(req, res);
+  if (raw === null) return;
+  let body: unknown;
+  if (raw.length > 0) {
+    try {
+      body = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(raw));
+    } catch {
+      return reply(res, 400, { error: 'invalid_json' });
+    }
+  }
+
+  // Unlike outbox mutations, inference has no durable side effect to inspect after a timeout.
+  // Abort the exact Temporary Chat request when the caller leaves or the bounded wait expires.
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, browserInferenceDeadlineMs);
+  timer.unref();
+  const closed = () => {
+    if (!res.writableEnded) controller.abort();
+  };
+  res.once('close', closed);
+  try {
+    // The switch can flip while the body is arriving.
+    if (!actionsAllowed()) return refuseActions(res);
+    const result = await runBrowserInference(body, controller.signal);
+    if (!res.destroyed) reply(res, 200, result);
+  } catch (error) {
+    if (res.destroyed) return;
+    if (timedOut) return reply(res, 504, { error: 'browser_timeout' });
+    if (error instanceof BrowserInferenceError) {
+      const status = error.code === 'invalid_request' ? 400
+        : error.code === 'browser_busy' ? 503
+          : 502;
+      return reply(res, status, { error: error.code });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    res.off('close', closed);
+  }
+}
+
 async function handle(req: http.IncomingMessage, res: http.ServerResponse, token: string, instance: http.Server): Promise<void> {
   // Never answer a browser, not even with an error body it could learn from.
   if (req.headers.origin !== undefined) return reply(res, 403, { error: 'origin_forbidden' });
@@ -379,16 +435,18 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, token
     return reply(res, 400, { error: 'invalid_target' });
   }
   const route = url.pathname;
+  const browserInference = route === BROWSER_INFERENCE_ROUTE;
+  const actionRoute = browserInference || isActionPath(route);
   // An action is told apart by method and path alone, before any body is read or any id looked
   // up, so that with the switch off every one of them gets the same answer and nothing changes.
-  if (req.method === 'POST' && isActionPath(route)) {
+  if (req.method === 'POST' && actionRoute) {
     if (!actionsAllowed()) return refuseActions(res);
-    return handleAction(req, res, route, url);
+    return browserInference ? handleBrowserInference(req, res, url) : handleAction(req, res, route, url);
   }
   // Charged only after authentication, so another local process cannot spend the budget.
   if (rateLimited()) return reply(res, 429, { error: 'rate_limited' });
   if (req.method !== 'GET') {
-    const allow = route === '/v1/inputs' ? 'GET, POST' : isActionPath(route) ? 'POST' : 'GET';
+    const allow = route === '/v1/inputs' ? 'GET, POST' : actionRoute ? 'POST' : 'GET';
     return reply(res, 405, { error: 'method_not_allowed' }, { allow });
   }
   if (Number(req.headers['content-length'] ?? 0) > 0 || req.headers['transfer-encoding'] !== undefined) {
@@ -396,7 +454,7 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse, token
     return reply(res, 413, { error: 'body_not_allowed' });
   }
   // A cancel path answers to POST only; a GET there is a wrong method, not a missing page.
-  if (isActionPath(route) && route !== '/v1/inputs') return reply(res, 405, { error: 'method_not_allowed' }, { allow: 'POST' });
+  if (actionRoute && route !== '/v1/inputs') return reply(res, 405, { error: 'method_not_allowed' }, { allow: 'POST' });
 
   if (route === '/v1/health') {
     const uptime = process.uptime();
