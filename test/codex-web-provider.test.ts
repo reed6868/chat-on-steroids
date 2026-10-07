@@ -1,6 +1,12 @@
+import http from 'node:http';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import { expect, it } from 'vitest';
+import { makeTempDir, removeTempDir } from './helpers.js';
 import {
   buildBrowserPrompt,
+  createProviderServer,
+  inferViaCos,
   parseBrowserEnvelope,
   responseEvents
 } from '../scripts/codex-cos-web-provider.mjs';
@@ -71,4 +77,96 @@ it('emits the minimal Responses SSE semantics Codex needs for text and tool turn
     item: { type: 'function_call', name: 'exec_command', arguments: '{\"cmd\":\"pwd\"}' }
   });
   expect(typeof (tools[1] as any).item.call_id).toBe('string');
+});
+
+
+function listen(server: http.Server): Promise<number> {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject);
+      const address = server.address();
+      if (!address || typeof address === 'string') reject(new Error('missing server address'));
+      else resolve(address.port);
+    });
+  });
+}
+
+function post(port: number, route: string, body: unknown, token: string): Promise<{ status: number; text: string }> {
+  return new Promise((resolve, reject) => {
+    const payload = Buffer.from(JSON.stringify(body));
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port,
+      path: route,
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer ' + token,
+        'content-type': 'application/json',
+        'content-length': String(payload.length)
+      }
+    }, res => {
+      const chunks: Buffer[] = [];
+      res.on('data', chunk => chunks.push(chunk));
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, text: Buffer.concat(chunks).toString('utf8') }));
+    });
+    req.on('error', reject);
+    req.end(payload);
+  });
+}
+
+it('round-trips Codex through only the authenticated COS browser inference boundary', async () => {
+  const dir = await makeTempDir('clf-codex-web-provider-');
+  let seenAuthorization = '';
+  let seenPrompt = '';
+  const cos = http.createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on('data', chunk => chunks.push(chunk));
+    req.on('end', () => {
+      seenAuthorization = String(req.headers.authorization ?? '');
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      seenPrompt = body.prompt;
+      const nonce = /The object MUST contain "nonce":"([^"]+)"/.exec(body.prompt)?.[1];
+      const answer = JSON.stringify({
+        nonce,
+        type: 'tool_calls',
+        calls: [{ kind: 'function', name: 'exec_command', arguments: { cmd: 'pwd' } }]
+      });
+      const payload = JSON.stringify({ text: answer });
+      res.writeHead(200, { 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(payload)) });
+      res.end(payload);
+    });
+  });
+  const cosPort = await listen(cos);
+
+  try {
+    await fs.writeFile(path.join(dir, 'endpoint.json'), JSON.stringify({ port: cosPort }));
+    await fs.writeFile(path.join(dir, 'token'), 'cos-control-secret\n');
+
+    await expect(inferViaCos(request, { controlDir: dir })).resolves.toMatchObject({
+      type: 'tool_calls',
+      calls: [{ kind: 'function', name: 'exec_command' }]
+    });
+    expect(seenAuthorization).toBe('Bearer cos-control-secret');
+    expect(seenPrompt).toContain('<codex_request_json>');
+
+    const provider = createProviderServer({ providerToken: 'provider-secret', controlDir: dir });
+    const providerPort = await listen(provider);
+    try {
+      const denied = await post(providerPort, '/v1/responses', request, 'wrong-secret');
+      expect(denied.status).toBe(401);
+
+      const response = await post(providerPort, '/v1/responses', request, 'provider-secret');
+      expect(response.status).toBe(200);
+      expect(response.text).toContain('event: response.created');
+      expect(response.text).toContain('event: response.output_item.done');
+      expect(response.text).toContain('"type":"function_call"');
+      expect(response.text).toContain('event: response.completed');
+    } finally {
+      await new Promise<void>(resolve => provider.close(() => resolve()));
+    }
+  } finally {
+    await new Promise<void>(resolve => cos.close(() => resolve()));
+    await removeTempDir(dir);
+  }
 });
