@@ -19,6 +19,21 @@ function exactKeys(value, allowed) {
   return Object.keys(value).every(key => allowed.includes(key));
 }
 
+function currentTools(request) {
+  if (!isRecord(request) || !Array.isArray(request.input)) throw new Error('invalid Responses request');
+  if (Array.isArray(request.tools)) return request.tools;
+  if (request.tools !== undefined && request.tools !== null) throw new Error('invalid Responses tools');
+
+  // Current Codex models can use Responses Lite: the live tool declaration is prepended as the
+  // first developer `additional_tools` item instead of being sent in the top-level `tools`
+  // field. Never scan later history for one: an older declaration may contain tools that the
+  // current turn deliberately removed.
+  const prefix = request.input[0];
+  return isRecord(prefix) && prefix.type === 'additional_tools' && prefix.role === 'developer' && Array.isArray(prefix.tools)
+    ? prefix.tools
+    : [];
+}
+
 function toolCatalog(tools) {
   const catalog = new Map();
   if (!Array.isArray(tools)) return catalog;
@@ -43,7 +58,7 @@ export function buildBrowserPrompt(request, nonce) {
   const payload = {
     model: request.model,
     input: request.input,
-    tools: Array.isArray(request.tools) ? request.tools : [],
+    tools: currentTools(request),
     tool_choice: request.tool_choice ?? 'auto',
     parallel_tool_calls: request.parallel_tool_calls === true,
     reasoning: isRecord(request.reasoning) ? request.reasoning : null
@@ -265,7 +280,7 @@ export async function inferViaCos(request, options = {}) {
     body: { prompt, model: model || null, reasoningEffort: reasoningEffort || null },
     signal: options.signal
   });
-  const envelope = parseBrowserEnvelope(result.text, nonce, request.tools);
+  const envelope = parseBrowserEnvelope(result.text, nonce, currentTools(request));
   if (envelope.type === 'tool_calls') {
     if (request.tool_choice === 'none') throw new Error('browser requested a tool when tool_choice is none');
     if (request.parallel_tool_calls !== true && envelope.calls.length > 1) {
