@@ -401,8 +401,9 @@ async function handleBrowserInference(req: http.IncomingMessage, res: http.Serve
     if (timedOut) return reply(res, 504, { error: 'browser_timeout' });
     if (error instanceof BrowserInferenceError) {
       const status = error.code === 'invalid_request' ? 400
-        : error.code === 'browser_busy' ? 503
-          : 502;
+        : error.code === 'browser_tools_not_fenced' ? 409
+          : error.code === 'browser_busy' ? 503
+            : 502;
       return reply(res, status, { error: error.code });
     }
     throw error;
