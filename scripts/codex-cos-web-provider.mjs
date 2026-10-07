@@ -265,7 +265,16 @@ export async function inferViaCos(request, options = {}) {
     body: { prompt, model: model || null, reasoningEffort: reasoningEffort || null },
     signal: options.signal
   });
-  return parseBrowserEnvelope(result.text, nonce, request.tools);
+  const envelope = parseBrowserEnvelope(result.text, nonce, request.tools);
+  if (envelope.type === 'tool_calls') {
+    if (request.tool_choice === 'none') throw new Error('browser requested a tool when tool_choice is none');
+    if (request.parallel_tool_calls !== true && envelope.calls.length > 1) {
+      throw new Error('browser returned parallel tool calls when they are disabled');
+    }
+  } else if (request.tool_choice === 'required') {
+    throw new Error('browser returned a message when a tool call is required');
+  }
+  return envelope;
 }
 
 function errorReply(res, status, code, detail) {
