@@ -28,10 +28,11 @@ const request = {
   ],
   tool_choice: 'auto',
   parallel_tool_calls: false,
-  reasoning: { effort: 'high' }
+  reasoning: { effort: 'high' },
+  text: { verbosity: 'low' }
 };
 
-it('serializes the exact Codex inference request as reference data with a nonce-bound output contract', () => {
+it('preserves Codex role semantics and model-visible controls behind a nonce-bound output contract', () => {
   const prompt = buildBrowserPrompt(request, 'nonce-123');
   expect(prompt).toContain('nonce-123');
   expect(prompt).toContain('\"exec_command\"');
