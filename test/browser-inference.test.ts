@@ -1,11 +1,16 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 
 const browser = vi.hoisted(() => ({ request: vi.fn() }));
+const policy = vi.hoisted(() => ({ strict: true }));
 vi.mock('../src/main/session/input.js', () => ({ requestBrowserDecision: browser.request }));
+vi.mock('../src/main/session/conversation-access.js', () => ({ strictChatAllowlistEnabled: () => policy.strict }));
 
 const { runBrowserInference } = await import('../src/main/browser-inference.js');
 
-beforeEach(() => browser.request.mockReset());
+beforeEach(() => {
+  policy.strict = true;
+  browser.request.mockReset();
+});
 
 it('uses the existing temporary browser decision transport without creating runtime ownership', async () => {
   browser.request.mockResolvedValueOnce('browser answer');
@@ -53,4 +58,12 @@ it('normalizes browser transport failures without retrying or falling back to an
   await expect(runBrowserInference({ prompt: 'one shot' }, new AbortController().signal))
     .rejects.toMatchObject({ code: 'browser_busy' });
   expect(browser.request).toHaveBeenCalledTimes(1);
+});
+
+
+it('refuses browser inference unless strict chat allowlisting fences the temporary planner from COS tools', async () => {
+  policy.strict = false;
+  await expect(runBrowserInference({ prompt: 'Do not bypass Codex' }, new AbortController().signal))
+    .rejects.toMatchObject({ code: 'browser_tools_not_fenced' });
+  expect(browser.request).not.toHaveBeenCalled();
 });
