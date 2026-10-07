@@ -226,7 +226,7 @@ Paths in this section are repository-relative. Most mechanisms have `main`, `sha
 | App shell | `src/main/index.ts`, `window-lifecycle.ts`, `window-layout.ts`, `window-icon.ts`, `tray-image.ts`, `shutdown.ts`: bootstrap, activation, geometry, tray and bounded exit. |
 | Config/security | `src/main/config.ts`, `platform.ts`, `secrets.ts`, `sandbox.ts`, `redaction.ts`; `src/shared/types.ts`, `capabilities.ts`: permission and host projection, secrets, approved paths. |
 | Publication | `src/main/connection.ts`, `mcp/server.ts`, `mcp/surfaces.ts`, `tunnel/{index,health,locate}.ts`, `diagnostics.ts`: endpoint/tunnel generation and truthful status. |
-| Local control API | `src/main/control-api.ts`, `src/main/control-reads.ts`, `src/main/control-actions.ts`, `src/shared/control-api.ts`: opt-in loopback listener, per-launch token, allowlisted read-only projections of other owners, and (behind `controlApi.allowActions`) send and cancel through the outbox. Owns no fact. The session list and event page it serves come from `session/read-model.ts`, the same functions the renderer's IPC handlers call. |
+| Local control API | `src/main/control-api.ts`, `src/main/control-reads.ts`, `src/main/control-actions.ts`, `src/main/browser-inference.ts`, `src/shared/control-api.ts`: opt-in loopback listener, per-launch token, allowlisted read-only projections of other owners, and (behind `controlApi.allowActions`) outbox actions plus one stateless ChatGPT-browser inference action. Owns no fact. The session list and event page it serves come from `session/read-model.ts`, the same functions the renderer's IPC handlers call. |
 | Tool dispatch | `src/main/mcp/{tools,kernel,inbound,call-context,tool-declarations}.ts`, `tools-core.ts`, `tools-desktop.ts`, `tools-plugins.ts`: declarations, exact caller, live guards and evidence. |
 | Code composition | `src/main/mcp/code-mode-{tool,runtime,worker}.ts`: surface-scoped `exec`, QuickJS admission, limits and explicit emissions. |
 | Instructions/plan | `src/main/mcp/{instructions,coding-instructions,plan-tool}.ts`, `src/shared/agent-plan.ts`, `src/renderer/agent-plan.ts`: executor contract and displayed progress plan. |
@@ -3920,8 +3920,7 @@ null instead of describing a different chat than `session`. Start and stop are s
 settings change starts or stops it only when the switch changes. Shutdown stops it in the
 admission/drain phase and does not let a late save reopen it.
 
-The action routes (`control-actions.ts`) are `POST /v1/inputs` (send a message to an existing chat)
-and `POST /v1/inputs/{id}/cancel`. They need a second switch, `controlApi.allowActions`, off by
+The action routes are `POST /v1/inputs` (send a message to an existing chat), `POST /v1/inputs/{id}/cancel`, and `POST /v1/browser/infer`. They need a second switch, `controlApi.allowActions`, off by
 default, which never outlives `enabled`: the config schema enforces it on load and on every write
 (`enabled:false` stores `allowActions:false`, and each field repairs on its own), and the settings
 merge mirrors it. Turning the API off revokes actions, and turning it back on leaves them off. The
@@ -3938,6 +3937,21 @@ none is needed (cancel). Actions run one at a time under their own 30-per-minute
 refused requests do not spend, with at most four waiting (503 `busy` beyond that). One that outlives
 20 s is answered 504. If it had not started, it is turned away and will not run later; if it was
 running, it may still finish, so a caller reads `GET /v1/inputs` before repeating it.
+
+Browser inference is intentionally not another agent/runtime owner. `POST /v1/browser/infer`
+accepts only a bounded `prompt`, optional browser model and optional reasoning effort, then calls
+`requestBrowserDecision` with `conversationId:null` and `lifetime:'temporary-planner'`. Every
+call therefore uses the existing exclusive browser outbox, Temporary Chat lifecycle, send receipt,
+completion and close path. It creates no Codex thread, OAuth credential, durable conversation
+mapping or fallback provider. The caller owns its conversation and tool lifecycle. A caller
+disconnect or the five-minute inference deadline aborts that exact decision; browser busy is 503,
+malformed input is 400, and browser transport ambiguity/failure is 502. Unlike durable outbox
+mutations, browser inference does not enter the 20-second serialized action queue because there is
+no durable result to inspect after that deadline; the decision outbox itself bounds concurrent
+helpers to four. `scripts/codex-cos-web-provider.mjs` is the optional Codex-specific adapter: it
+implements a loopback Responses-compatible endpoint, converts one Codex inference request into
+this generic browser action, validates a nonce-bound JSON answer, and emits only Codex Responses
+events. It has no authority inside COS and never calls an OpenAI inference endpoint.
 
 There is no new send path. A send builds the same `InputArgs` the composer builds for an ordinary
 message (`mode:'auto'`, no model or effort, no attachments, no stages, no automation; the caller
